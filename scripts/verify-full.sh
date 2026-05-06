@@ -65,13 +65,46 @@ pass() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 fail() { printf "  \033[31m✗\033[0m %s\n" "$1"; printf "    \033[33m→\033[0m %s\n" "$2"; return 1; }
 skip() { printf "  \033[33m⊘\033[0m %s (skipped)\n" "$1"; }
 
+# ---- Engine detection ---------------------------------------------------
+# Returns one of: vllm | llamacpp | sglang | unknown
+# Used to gate engine-coupled checks (Genesis markers, MTP-acceptance log
+# scrape) so non-vLLM engines (especially llama.cpp host builds without
+# Docker) get clean skips rather than misleading failures or fail-paths
+# that the user can't act on. Surfaced by @lamentofhighborne in #85, fixed
+# per #87. Engine class is detected ONCE at startup and cached.
+detect_engine() {
+  # Hint 1: llama-server's /props endpoint (vLLM doesn't ship it)
+  if curl -sf -m 3 "${URL}/props" >/dev/null 2>&1; then
+    echo "llamacpp"; return 0
+  fi
+  # Hint 2: vLLM's chat-completion response includes system_fingerprint
+  # like "vllm-0.20.2rc1.dev9+g01d4d1ad3-tp2-c9120464".
+  local fp
+  fp="$(curl -sf -m 5 "${URL}/v1/chat/completions" \
+    -H 'Content-Type: application/json' \
+    -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}" 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('system_fingerprint','') or '')" 2>/dev/null)"
+  case "$fp" in
+    vllm-*)   echo "vllm"; return 0 ;;
+    sglang-*) echo "sglang"; return 0 ;;
+  esac
+  # Hint 3: container name pattern as a fallback (cheap, no extra HTTP)
+  case "$CONTAINER" in
+    vllm-*)      echo "vllm"; return 0 ;;
+    llama-cpp-*) echo "llamacpp"; return 0 ;;
+  esac
+  echo "unknown"
+}
+ENGINE_KIND="$(detect_engine)"
+
 FAILED=0
 run_check() {
   local label="$1"; shift
   if "$@"; then :; else FAILED=$((FAILED + 1)); fi
 }
 
-echo "Running FULL functional test against ${URL} (model=${MODEL}, container=${CONTAINER})"
+echo "Running FULL functional test against ${URL}"
+echo "  model=${MODEL}  container=${CONTAINER}  engine=${ENGINE_KIND}"
 echo ""
 
 # --------------------------------------------------------------------
@@ -93,12 +126,20 @@ run_check "server" check_server
 # --------------------------------------------------------------------
 check_patches() {
   echo "[2/8] Genesis patches applied ..."
+  # Genesis is a vLLM-only patcher. Skip cleanly on other engines instead of
+  # leaving the user wondering whether "no Genesis marker" means a real
+  # problem or a category error.
+  case "$ENGINE_KIND" in
+    llamacpp) skip "llama.cpp engine — Genesis is vLLM-only, not applicable"; return 0 ;;
+    sglang)   skip "SGLang engine — Genesis is vLLM-only, not applicable";    return 0 ;;
+    unknown)  ;;  # fall through; might still be vLLM under a non-standard container name
+  esac
   if ! command -v docker >/dev/null 2>&1; then
-    skip "docker not in PATH"
+    skip "docker not in PATH (host engine build?)"
     return 0
   fi
   if ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
-    skip "container '${CONTAINER}' not found"
+    skip "container '${CONTAINER}' not found (host engine build? CONTAINER=none for host endpoints)"
     return 0
   fi
   # Anchors updated 2026-05-02 for Genesis v7.14+ logging conventions (the old
@@ -376,12 +417,26 @@ run_check "output_quality" check_output_quality
 # --------------------------------------------------------------------
 check_mtp_acceptance() {
   echo "[8/8] MTP acceptance length threshold ..."
+  # Spec-decode metrics extraction is engine-specific:
+  #   vLLM emits "SpecDecoding metrics: Mean acceptance length: N.NN" to stdout
+  #   llama.cpp llama-server doesn't emit a "Mean acceptance length" line; spec
+  #     metrics are inferred from per-slot accept counts in the response timings
+  #     (engine-internal, not exposed via OpenAI API)
+  #   SGLang has its own format
+  # For non-vLLM engines we skip rather than fail — the per-engine spec-decode
+  # validation is the user's responsibility (e.g. llama.cpp users run their own
+  # verify-full-mtp.sh adaptations like @lamentofhighborne's, until #87 lands a
+  # generalized harness).
+  case "$ENGINE_KIND" in
+    llamacpp) skip "llama.cpp engine — MTP acceptance check is vLLM-log-format-specific (run engine-side verification separately)"; return 0 ;;
+    sglang)   skip "SGLang engine — MTP acceptance check is vLLM-log-format-specific";   return 0 ;;
+  esac
   if ! command -v docker >/dev/null 2>&1; then
-    skip "docker not in PATH"
+    skip "docker not in PATH (host engine build? — see #87 for generalized harness work)"
     return 0
   fi
   if ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
-    skip "container '${CONTAINER}' not found"
+    skip "container '${CONTAINER}' not found (CONTAINER=none for host endpoints)"
     return 0
   fi
 

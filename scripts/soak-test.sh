@@ -81,12 +81,27 @@ cd "$REPO_ROOT"
 log() { printf '[soak] %s\n' "$*"; }
 die() { log "ERROR: $*"; exit 2; }
 need() { command -v "$1" >/dev/null 2>&1 || die "'$1' not found in PATH"; }
+soft_need() { command -v "$1" >/dev/null 2>&1; }
 
 need curl
-need docker
 need nvidia-smi
 need python3
 [[ -x "$HELPER" || -f "$HELPER" ]] || die "missing helper: $HELPER"
+
+# docker is soft-required: only needed for container-mode tracking
+# (docker stats + docker logs scrape). Host engines (e.g. llama.cpp host
+# build, see #85, #87) use CONTAINER=none and run without docker.
+HAVE_DOCKER=0
+if soft_need docker; then HAVE_DOCKER=1; fi
+if [[ "${CONTAINER:-}" == "none" ]]; then
+  HOST_MODE=1
+elif [[ "$HAVE_DOCKER" == "0" ]]; then
+  log "docker not in PATH — running in host mode (CONTAINER=none implied)"
+  HOST_MODE=1
+  CONTAINER="none"
+else
+  HOST_MODE=0
+fi
 
 auto_container() {
   docker ps --format '{{.Names}}' 2>/dev/null \
@@ -124,8 +139,10 @@ capture_state() {
   local label="$1"
   nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu,power.draw,temperature.gpu \
     --format=csv,noheader,nounits > "${SOAK_OUTPUT}/nvidia-smi-${label}.csv" 2>/dev/null || true
-  docker stats --no-stream --format '{{json .}}' "$CONTAINER" \
-    > "${SOAK_OUTPUT}/docker-stats-${label}.jsonl" 2>/dev/null || true
+  if [[ "$HOST_MODE" == "0" ]]; then
+    docker stats --no-stream --format '{{json .}}' "$CONTAINER" \
+      > "${SOAK_OUTPUT}/docker-stats-${label}.jsonl" 2>/dev/null || true
+  fi
 }
 
 finish() {
@@ -137,13 +154,24 @@ finish() {
 trap finish EXIT
 trap 'log "interrupted"; exit 2' INT TERM
 
-CONTAINER="${CONTAINER:-$(auto_container)}"
-[[ -n "$CONTAINER" ]] || die "no running vllm-qwen36-27b* container found; set CONTAINER=..."
-docker inspect "$CONTAINER" >/dev/null 2>&1 || die "container '$CONTAINER' not found"
-[[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)" == "true" ]] \
-  || die "container '$CONTAINER' is not running"
+if [[ "$HOST_MODE" == "1" ]]; then
+  log "host mode: CONTAINER=none — skipping docker checks (URL must be set or auto-detected)"
+  CONTAINER="none"
+else
+  CONTAINER="${CONTAINER:-$(auto_container)}"
+  [[ -n "$CONTAINER" ]] || die "no running vllm-qwen36-27b*/vllm-gemma-4-31b* container found; set CONTAINER=... or CONTAINER=none for host engines"
+  docker inspect "$CONTAINER" >/dev/null 2>&1 || die "container '$CONTAINER' not found (use CONTAINER=none for host engine builds)"
+  [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)" == "true" ]] \
+    || die "container '$CONTAINER' is not running"
+fi
 
-ENDPOINT="${ENDPOINT:-${URL:-$(endpoint_from_container "$CONTAINER")}}"
+if [[ "$HOST_MODE" == "1" ]]; then
+  # Host mode: URL must be set explicitly (or fall back to localhost:8020).
+  # We can't sniff a port from a container that doesn't exist.
+  ENDPOINT="${ENDPOINT:-${URL:-http://localhost:8020}}"
+else
+  ENDPOINT="${ENDPOINT:-${URL:-$(endpoint_from_container "$CONTAINER")}}"
+fi
 mkdir -p "$SOAK_OUTPUT"
 
 MODELS_JSON="${SOAK_OUTPUT}/models.json"
