@@ -107,7 +107,7 @@ if [ ! -x "$BENCH" ]; then
   echo "[error] expected $BENCH" >&2; exit 1
 fi
 
-# Auto-detect URL/CONTAINER/MODEL from the running vllm container.
+# Auto-detect URL/CONTAINER/MODEL from the running engine.
 # This must happen BEFORE we exec bench.sh under our sudo context — bench.sh's
 # own autodetect doesn't reliably fire when re-invoked under sudo (env vars
 # get stripped, defaults kick in, wrong MODEL → HTTP 404 against the server).
@@ -126,10 +126,19 @@ if [ -z "${MODEL:-}" ] && [ -n "${URL:-}" ]; then
     | python3 -c "import sys, json; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null || echo "")
 fi
 
-if [ -z "${URL:-}" ] || [ -z "${MODEL:-}" ] || [ -z "${CONTAINER:-}" ]; then
-  echo "[error] could not auto-detect a running container + URL + MODEL." >&2
+# CONTAINER is OPTIONAL — host engine builds (e.g. llama.cpp host server, see
+# club-3090#85, #87) have no container. URL + MODEL are the only hard
+# requirements. If CONTAINER is unset we mark it "none" for display, which is
+# also the value bench.sh expects to skip its docker-log scrape cleanly.
+if [ -z "${CONTAINER:-}" ]; then
+  CONTAINER="none"
+fi
+
+if [ -z "${URL:-}" ] || [ -z "${MODEL:-}" ]; then
+  echo "[error] could not auto-detect a running URL + MODEL." >&2
   echo "[hint]  start a model server first (bash scripts/switch.sh <variant>)" >&2
-  echo "[hint]  or pass URL=http://... CONTAINER=name MODEL=name as env vars" >&2
+  echo "[hint]  or pass URL=http://... MODEL=name as env vars" >&2
+  echo "[hint]  CONTAINER is optional — set CONTAINER=none for host builds" >&2
   echo "[got]   URL='${URL:-}' CONTAINER='${CONTAINER:-}' MODEL='${MODEL:-}'" >&2
   exit 1
 fi
