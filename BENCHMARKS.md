@@ -62,6 +62,7 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 |---|---|---|---:|---:|---:|---|---|
 | `llamacpp/default` | @noonghunna (1× 3090) | Unsloth Q5_K_XL | 262K | 21 / 21 | ~20 GB | 2026-04-21 | bulletproof — different engine, different memory allocator, no Cliff 1 / Cliff 2. Slow decode but cliff-immune. |
 | `llamacpp/concurrent` | @noonghunna (1× 3090) | Unsloth Q5_K_XL | 262K | TBD | TBD | — | concurrent-serving variant. |
+| llama.cpp PR [#22673](https://github.com/ggml-org/llama.cpp/pull/22673) MTP, custom build (`Qwen3.6-27B-MTP-Q4_K_M-GGUF` + `--spec-type mtp --spec-draft-n-max 3`) | @efschu (**2× Tesla V100-SXM2-16GB**, Xeon Gold 6154, Debian 13, custom-built llama-server docker) | Q4_K_M MTP | 100K | **49.96 / 62.46** | ~14.6 GB/card | 2026-05-06 | **First V100 (sm_70 Volta) cross-rig data on the matrix** — only non-3090/4090/5090 GPU class tested. vLLM blocked (V100=CC 7.0, vLLM needs ≥7.5); fell back to llama.cpp via am17an's PR #22673 with a custom-built docker. **All 7 stress checks PASS including 90K NIAH** (Cliff 2 territory). 2× cards via tensor split (`-sm tensor`). MTP n=3, accept rates not in log. ~80 W/card (V100 max 300 W). [Issue #80](https://github.com/noonghunna/club-3090/issues/80). |
 
 ### Dual-card (2× RTX 3090, TP=2)
 
