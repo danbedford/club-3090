@@ -91,6 +91,20 @@
 #   - Per-cap bench logs at /tmp/power-cap-N{wattage}.log
 #   - Markdown summary at /tmp/power-cap-summary.md (paste into GitHub issue/discussion)
 #
+# Per-cap summary columns:
+#   Cap | Narr TPS | Code TPS | Actual W | Temp °C | SM clk | Mem clk | Pwr-throttle % | P-state | TPS/W
+#
+# - SM clk / Mem clk = median compute / memory clocks during in-load samples (MHz). Together
+#   they distinguish compute-bound vs bandwidth-bound regimes: if SM clock varies with cap
+#   while TPS plateaus → bandwidth-bound; if SM clock is pinned at max while TPS still climbs
+#   → compute-bound.
+# - Pwr-throttle % = % of in-load samples where firmware was actively capping draw at the
+#   set limit (sw_power_cap=Active). 100% means power is the binding constraint at that
+#   cap; <100% means workload undersupply or thermal-throttle taking over.
+# - P-state = dominant firmware power state during in-load samples (P0=max boost,
+#   P2=sustained-load pinned, higher numbers=idle). Boost-state plateaus appear when
+#   adjacent caps share a P-state and draw the same wattage despite different cap settings.
+#
 # Requires sudo for `nvidia-smi -pl`. Auto-detects running container + URL +
 # MODEL via the same logic as bench.sh.
 #
@@ -1042,8 +1056,8 @@ RESULTS_FILE=/tmp/power-cap-summary.md
   echo "> MTP at 100 TPS). The *shape* of the efficiency knee is the cross-rig signal; absolute"
   echo "> numbers only compare like-to-like."
   echo ""
-  echo "| Cap (W) | Narr wall TPS | Code wall TPS | Actual power (W) | GPU temp (°C) | TPS/W (narr) |"
-  echo "|--------:|--------------:|--------------:|-----------------:|--------------:|-------------:|"
+  echo "| Cap (W) | Narr wall TPS | Code wall TPS | Actual power (W) | GPU temp (°C) | SM clk (MHz) | Mem clk (MHz) | Pwr-throttle % | P-state | TPS/W (narr) |"
+  echo "|--------:|--------------:|--------------:|-----------------:|--------------:|-------------:|--------------:|---------------:|:-------:|-------------:|"
 } > "$RESULTS_FILE"
 
 IFS=',' read -ra CAP_ARRAY <<< "$CAPS"
@@ -1079,7 +1093,7 @@ for CAP in "${CAP_ARRAY[@]}"; do
   SAMPLE_FILE="/tmp/power-cap-N${CAP}-samples.csv"
   (
     while true; do
-      nvidia-smi --query-gpu=index,utilization.gpu,power.draw,temperature.gpu \
+      nvidia-smi --query-gpu=index,utilization.gpu,power.draw,temperature.gpu,clocks.current.sm,clocks.current.memory,pstate,clocks_throttle_reasons.sw_power_cap,clocks_throttle_reasons.hw_thermal_slowdown \
         --format=csv,noheader,nounits -i "$GPU_INDEX" 2>/dev/null | head -1
       sleep 0.5
     done
@@ -1217,28 +1231,55 @@ PY
   if [ -s "$SAMPLE_FILE" ]; then
     UNDER_LOAD_STATS=$(python3 -c "
 import sys
+from collections import Counter
 samples = []
 with open('$SAMPLE_FILE') as f:
     for line in f:
         try:
-            idx, util, power, temp = [x.strip() for x in line.strip().split(',')]
+            parts = [x.strip() for x in line.strip().split(',')]
+            if len(parts) < 9:
+                continue
+            idx, util, power, temp, sm_clk, mem_clk, pstate, pwr_thr, therm_thr = parts
             if int(util) > 50:
-                samples.append((float(power), int(temp)))
+                samples.append((
+                    float(power),
+                    int(temp),
+                    int(sm_clk),
+                    int(mem_clk),
+                    pstate,
+                    pwr_thr == 'Active',
+                    therm_thr == 'Active',
+                ))
         except Exception:
             continue
 if not samples:
-    print('? ?')
+    print('? ? ? ? ? ? ?')
 else:
     powers = sorted(s[0] for s in samples)
     temps  = [s[1] for s in samples]
+    sm_clks = sorted(s[2] for s in samples)
+    mem_clks = sorted(s[3] for s in samples)
+    pstates = [s[4] for s in samples]
+    n = len(samples)
+    pwr_thr_pct = sum(1 for s in samples if s[5]) / n * 100
+    therm_thr_pct = sum(1 for s in samples if s[6]) / n * 100
     median_power = powers[len(powers)//2]
     peak_temp    = max(temps)
-    print(f'{median_power:.2f} {peak_temp}')
-" 2>/dev/null || echo "? ?")
+    median_sm    = sm_clks[len(sm_clks)//2]
+    median_mem   = mem_clks[len(mem_clks)//2]
+    dom_pstate   = Counter(pstates).most_common(1)[0][0]
+    print(f'{median_power:.2f} {peak_temp} {median_sm} {median_mem} {dom_pstate} {pwr_thr_pct:.0f} {therm_thr_pct:.0f}')
+" 2>/dev/null || echo "? ? ? ? ? ? ?")
     ACTUAL_POWER=$(echo "$UNDER_LOAD_STATS" | awk '{print $1}')
     GPU_TEMP=$(echo "$UNDER_LOAD_STATS"      | awk '{print $2}')
+    SM_CLK=$(echo "$UNDER_LOAD_STATS"        | awk '{print $3}')
+    MEM_CLK=$(echo "$UNDER_LOAD_STATS"       | awk '{print $4}')
+    PSTATE=$(echo "$UNDER_LOAD_STATS"        | awk '{print $5}')
+    PWR_THR_PCT=$(echo "$UNDER_LOAD_STATS"   | awk '{print $6}')
+    THERM_THR_PCT=$(echo "$UNDER_LOAD_STATS" | awk '{print $7}')
   else
     ACTUAL_POWER="?"; GPU_TEMP="?"
+    SM_CLK="?"; MEM_CLK="?"; PSTATE="?"; PWR_THR_PCT="?"; THERM_THR_PCT="?"
   fi
 
   # Fallback to bench.sh GPU-state line if sampler returned ?
@@ -1264,13 +1305,13 @@ print(f"{(end - start) / 1e9:.1f}")
 PY
 )
 
-  printf "[result] %sW cap → %s narr / %s code TPS @ %sW actual draw, %s°C, eff %s TPS/W\n" \
-    "$CAP" "$NARR_TPS" "$CODE_TPS" "$ACTUAL_POWER" "$GPU_TEMP" "$EFFICIENCY"
+  printf "[result] cap=%sW actual_W=%s temp=%s sm_clk=%s mem_clk=%s pstate=%s throttle_pwr=%s throttle_thermal=%s narr=%s code=%s tps_per_w=%s\n" \
+    "$CAP" "$ACTUAL_POWER" "$GPU_TEMP" "$SM_CLK" "$MEM_CLK" "$PSTATE" "$PWR_THR_PCT" "$THERM_THR_PCT" "$NARR_TPS" "$CODE_TPS" "$EFFICIENCY"
   printf "[time] %sW cap wall=%ss start=%s end=%s\n\n" \
     "$CAP" "$CAP_WALL_S" "$CAP_START_UTC" "$CAP_END_UTC"
 
-  printf "| %s | %s | %s | %s | %s | %s |\n" \
-    "$CAP" "$NARR_TPS" "$CODE_TPS" "$ACTUAL_POWER" "$GPU_TEMP" "$EFFICIENCY" \
+  printf "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n" \
+    "$CAP" "$NARR_TPS" "$CODE_TPS" "$ACTUAL_POWER" "$GPU_TEMP" "$SM_CLK" "$MEM_CLK" "$PWR_THR_PCT" "$PSTATE" "$EFFICIENCY" \
     >> "$RESULTS_FILE"
 done
 
@@ -1311,6 +1352,15 @@ fi
   esac
   echo "- Actual power = **median** of 0.5s samples taken DURING the workload where util > 50% (i.e. under-load)."
   echo "- GPU temp = **peak** during workload (not a single post-bench point sample)."
+  echo "- **SM clk / Mem clk** = **median** clock speeds during in-load samples. SM clock is the compute-tier clock; memory clock is the HBM/GDDR clock."
+  echo "  - If SM clock varies with cap while TPS plateaus → workload is **bandwidth-bound** (more compute headroom unused)."
+  echo "  - If SM clock is pinned at max (~1.9 GHz on 3090, ~2.5+ GHz on 4090/5090) while TPS still climbs → workload is **compute-bound**."
+  echo "  - Memory clock should normally pin at the card's spec max (9501 MHz on 3090, 10501 MHz on 4090, 14001 MHz on 5090). If it drops, that's a memory power-state transition worth investigating."
+  echo "- **Pwr-throttle %** = % of in-load samples where firmware was actively capping draw at the set limit (\`clocks_throttle_reasons.sw_power_cap=Active\`)."
+  echo "  - **100%** → power is the binding constraint at this cap; raising the cap would draw more and produce more TPS."
+  echo "  - **<100%** → either workload is undersupplying the card (lift via concurrency/prefill), or thermal-throttle is taking over (check temp + cooling)."
+  echo "- **P-state** = dominant firmware power state during in-load samples. P0 = max boost, P2 = sustained-load pinned, higher numbers = idle/low-load."
+  echo "  - Boost-state plateaus appear when several adjacent caps all sit in the same P-state and draw identical wattage despite different cap settings (e.g. 3090s pin P2 across ~340-370W, then escape to P0 at 380W cap)."
   echo "- TPS/W efficiency lets you spot the knee — typically the highest cap before efficiency drops."
   echo "- If actual power < cap consistently and TPS is flat, the workload is **under-loading** this hardware:"
   echo "  the card can't use the extra power because it's not the bottleneck (smaller models on bigger"
