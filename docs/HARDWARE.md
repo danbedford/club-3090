@@ -117,6 +117,9 @@ How `decode-single` is timed (the new default since 2026-05-07):
 | 3090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | **290W** ⭐ | 32.16 | 32.06 | **0.111** | @noonghunna (this rig, 21-cap 10W sweep, time-bounded bench) |
 | 3090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 370W (stock) | 34.36 | 34.26 | 0.103 | same |
 | 3090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 390W (max) | 36.06 | 35.96 | 0.093 | same |
+| 3090 | air | llama.cpp `prefill-heavy` (Qwen3.6-27B) | **prefill-heavy** | **250W** ⭐ | 901.07 | (n/a) | **3.617** | @noonghunna (this rig, 21-cap adaptive sweep, 5m36s) |
+| 3090 | air | llama.cpp `prefill-heavy` (Qwen3.6-27B) | **prefill-heavy** | 370W (stock) | 1044.66 | (n/a) | 3.198 | same — boost-plateau holds 326W |
+| 3090 | air | llama.cpp `prefill-heavy` (Qwen3.6-27B) | **prefill-heavy** | 390W (max) | 1096.88 | (n/a) | 2.876 | same — 381W actual draw |
 | 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | **260W** ⭐ | 48.41 | 48.43 | 0.186 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
 | 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 280W | 49.54 | 49.10 | 0.177 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
 | 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 300W | 50.26 | 50.02 | 0.168 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
@@ -159,6 +162,10 @@ The cross-workload pattern: **both workload classes have efficiency knee at 400W
 ![3090 + Qwen3.6-27B + llama.cpp power-cap efficiency curve (noonghunna)](img/power-cap-3090-qwen36.png)
 
 *3090 air-cooled + Qwen3.6-27B Q3_K_XL + mainline llama.cpp, 21-cap sweep 190-390W via time-bounded streaming bench (10s/direction). **Total wall: 8m12s.** Yellow callout: 290W sweet spot (0.111 TPS/W) at **78% of stock 370W TDP**. Orange-shaded zone 340-370W: firmware boost-state plateau where caps 340/350/360/370W all draw identical ~334W actual. At 380W cap, draw escapes to 361W; at 390W cap, draw reaches 388W — so the apparent "ceiling" at 334W isn't a hardware limit, it's a discrete boost-state behavior. GPU temp peaked at 76°C at 390W cap (air-cooled, no thermal throttle within the 0-100% util envelope). Source script: [`img/power-cap-3090-qwen36.py`](img/power-cap-3090-qwen36.py).*
+
+![3090 + Qwen3.6 + llama.cpp prefill-heavy power-cap efficiency curve (noonghunna)](img/power-cap-3090-prefill.png)
+
+*3090 air-cooled + Qwen3.6-27B Q3_K_XL + mainline llama.cpp, 21-cap **prefill-heavy** sweep 190-390W via adaptive prompt calibration (probe TPS at 390W → size prompt for 10s prefill at high cap → 11K-token prompt used across all caps). **Total wall: 5m36s.** Yellow callout: **250W sweet spot (3.617 prefill TPS/W)** at **68% of stock TDP** — note: this is a different sweet spot than decode-single's 290W on the same rig. Boost-state plateau visible at 340-370W (caps draw identical 326W actual). Companion to the decode chart above; together they show **same card has different power-knee for different workload class**.*
 
 **Cross-rig pattern**: efficiency knee falls at **~60-85% of stock TDP** across consumer Ampere/Ada — start there for a new card class and zoom in. Ada (4090) is proportionally more aggressive than Ampere (3090) — 4090 cuts 33% of stock TDP for ~7% TPS loss; 3090 cuts 15% of stock for ~5% loss.
 
