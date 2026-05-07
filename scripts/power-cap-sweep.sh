@@ -106,8 +106,8 @@ STEP_SIZE=10          # increment in W between caps when --caps not specified (1
 LOAD_MODE="decode-single"   # decode-single | decode-concurrent | prefill-heavy
 CONCURRENCY=4         # parallel streams, or "auto", when LOAD_MODE=decode-concurrent
 BENCH_RUNS=1          # repeated measured batches for decode-concurrent/prefill-heavy (median reported)
-MAX_CONCURRENCY_PROBE=32
-LOAD_TARGET=0.85      # target actual-power/cap ratio for --concurrency auto
+MAX_CONCURRENCY_PROBE=16
+LOAD_TARGET=0.92      # target actual-power/cap ratio for --concurrency auto
 CALIBRATION_NOTE=""
 
 while [ $# -gt 0 ]; do
@@ -147,6 +147,10 @@ if ! [[ "$BENCH_RUNS" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "$MAX_CONCURRENCY_PROBE" =~ ^[1-9][0-9]*$ ]]; then
   echo "[error] --max-concurrency-probe must be a positive integer" >&2
+  exit 1
+fi
+if [ "$CONCURRENCY_AUTO" -eq 1 ] && [ "$MAX_CONCURRENCY_PROBE" -lt 4 ]; then
+  echo "[error] --max-concurrency-probe must be at least 4 when --concurrency auto is used" >&2
   exit 1
 fi
 if ! python3 - "$LOAD_TARGET" <<'PY' >/dev/null 2>&1
@@ -409,12 +413,17 @@ PY
   sleep 2
 
   CAL_DIR=$(mktemp -d /tmp/power-cap-autoload.XXXXXX)
-  BEST_N=1
+  BEST_N=""
   BEST_TPS=0
   BEST_POWER="?"
   BEST_RATIO=0
   SELECTED_N=""
-  for CANDIDATE in 1 2 4 6 8 12 16 24 32 48 64; do
+  PREV_N=""
+  PREV_TPS=""
+  PREV_POWER=""
+  PREV_RATIO=""
+  ANY_RATIO_GE_050=0
+  for CANDIDATE in 4 6 8 12 16; do
     if [ "$CANDIDATE" -gt "$MAX_CONCURRENCY_PROBE" ]; then
       break
     fi
@@ -426,32 +435,76 @@ PY
       echo "[calibrate] N=${PROBE_N} had request failures; stopping probe growth."
       break
     fi
-    IS_BETTER=$(python3 - "$PROBE_TPS" "$BEST_TPS" <<'PY'
+    RATIO_GE_050=$(python3 - "$PROBE_RATIO" <<'PY'
 import sys
-print("1" if float(sys.argv[1]) > float(sys.argv[2]) else "0")
+print("1" if float(sys.argv[1]) >= 0.50 else "0")
 PY
 )
-    if [ "$IS_BETTER" = "1" ]; then
+    [ "$RATIO_GE_050" = "1" ] && ANY_RATIO_GE_050=1
+    if [ -z "$BEST_N" ]; then
       BEST_N="$PROBE_N"
       BEST_TPS="$PROBE_TPS"
       BEST_POWER="$PROBE_POWER"
       BEST_RATIO="$PROBE_RATIO"
     fi
-    REACHED_TARGET=$(python3 - "$PROBE_RATIO" "$LOAD_TARGET" <<'PY'
+    if [ -z "$PREV_N" ]; then
+      FAST_PATH=$(python3 - "$PROBE_RATIO" <<'PY'
 import sys
-print("1" if float(sys.argv[1]) >= float(sys.argv[2]) else "0")
+print("1" if float(sys.argv[1]) >= 0.97 else "0")
 PY
 )
-    if [ "$REACHED_TARGET" = "1" ]; then
-      SELECTED_N="$PROBE_N"
-      echo "[calibrate] selected N=${SELECTED_N}: reached target load (${PROBE_RATIO})."
-      break
+      if [ "$FAST_PATH" = "1" ]; then
+        SELECTED_N="$PROBE_N"
+        echo "[calibrate] N=${PROBE_N} ratio=${PROBE_RATIO} reached fast-path threshold (>=0.97); selecting N=${SELECTED_N}."
+        break
+      fi
+      PREV_N="$PROBE_N"
+      PREV_TPS="$PROBE_TPS"
+      PREV_POWER="$PROBE_POWER"
+      PREV_RATIO="$PROBE_RATIO"
+      continue
     fi
+
+    read -r TPS_DELTA DRAW_DELTA TPS_IMPROVED DRAW_IMPROVED < <(python3 - "$PREV_TPS" "$PROBE_TPS" "$PREV_POWER" "$PROBE_POWER" <<'PY'
+import sys
+prev_tps, cur_tps, prev_power, cur_power = map(float, sys.argv[1:5])
+tps_delta = (cur_tps - prev_tps) / max(prev_tps, 1e-9)
+draw_delta = (cur_power - prev_power) / max(prev_power, 1e-9)
+print(f"{tps_delta * 100:.1f} {draw_delta * 100:.1f} {1 if tps_delta > 0.03 else 0} {1 if draw_delta > 0.03 else 0}")
+PY
+)
+    if [ "$TPS_IMPROVED" = "1" ] && [ "$DRAW_IMPROVED" = "1" ]; then
+      BEST_N="$PROBE_N"
+      BEST_TPS="$PROBE_TPS"
+      BEST_POWER="$PROBE_POWER"
+      BEST_RATIO="$PROBE_RATIO"
+      PREV_N="$PROBE_N"
+      PREV_TPS="$PROBE_TPS"
+      PREV_POWER="$PROBE_POWER"
+      PREV_RATIO="$PROBE_RATIO"
+      continue
+    fi
+
+    SELECTED_N="$BEST_N"
+    REASON="plateau"
+    if [ "$TPS_IMPROVED" != "1" ] && [ "$DRAW_IMPROVED" != "1" ]; then
+      REASON="TPS and draw plateau"
+    elif [ "$TPS_IMPROVED" != "1" ]; then
+      REASON="TPS plateau"
+    elif [ "$DRAW_IMPROVED" != "1" ]; then
+      REASON="draw plateau"
+    fi
+    echo "[calibrate] plateau at N=${PROBE_N} (${REASON}; TPS ${PREV_TPS}→${PROBE_TPS} = ${TPS_DELTA}%, draw ${PREV_POWER}W→${PROBE_POWER}W = ${DRAW_DELTA}%); selecting N=${SELECTED_N}."
+    break
   done
   if [ -z "$SELECTED_N" ]; then
     SELECTED_N="$BEST_N"
-    echo "[calibrate] selected N=${SELECTED_N}: best non-failing aggregate TPS before target/load limit (draw=${BEST_POWER}W ratio=${BEST_RATIO})."
-    echo "[calibrate] If draw is still far below cap, increase --max-concurrency-probe or use --load-mode prefill-heavy."
+    if [ "$ANY_RATIO_GE_050" -eq 0 ]; then
+      echo "[calibrate] selected N=${SELECTED_N}: best non-failing aggregate TPS before target/load limit (draw=${BEST_POWER}W ratio=${BEST_RATIO})."
+      echo "[calibrate] If draw is still far below cap, increase --max-concurrency-probe or use --load-mode prefill-heavy."
+    else
+      echo "[calibrate] reached --max-concurrency-probe=${MAX_CONCURRENCY_PROBE}; selecting N=${SELECTED_N}."
+    fi
   fi
   CALIBRATION_NOTE="auto-selected concurrency=${SELECTED_N} at ${HIGHEST_CAP}W cap (target=${LOAD_TARGET}, max-probe=${MAX_CONCURRENCY_PROBE})"
   CONCURRENCY="$SELECTED_N"
