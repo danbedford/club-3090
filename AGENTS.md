@@ -51,6 +51,67 @@ If you're considering enabling a new Genesis env var by default in a shipped com
 - Each variant ships with a **header table** comparing it against sibling composes in the same directory. Update both directions when adding/removing variants.
 - Keep the variant set lean. Three composes that overlap badly (similar TPS + similar context + same KV) is worse than two with a clean differentiation. Removed `fast-chat.yml` 2026-04-29 for exactly this reason.
 
+#### Compose filename convention — `<topology>-<feature>.yml`
+
+The model is implied by the parent directory (`models/<model>/vllm/compose/`); don't repeat it in the filename. Topology is the first segment, feature suffixes follow.
+
+| Position | Examples |
+|---|---|
+| Topology prefix | `single` · `dual` · `dual-nvlink` · `dual4` · `quad` |
+| Feature suffix(es) | `-mtp` · `-dflash` · `-turbo` (TQ3 KV) · `-int8` (INT8 PTH) · `-awq` · `-noviz` |
+| Default-recommended | Drop the implicit suffix — Qwen's `dual.yml` *is* MTP+fp8. Only add explicit suffix when there's another drafter/KV variant in the same directory (e.g. Gemma has `dual.yml` + `dual-dflash.yml`, so the default doesn't need `-mtp`) |
+
+Examples (post-2026-05-09):
+- `models/qwen3.6-27b/vllm/compose/dual.yml` (Qwen dual default — fp8 + MTP)
+- `models/qwen3.6-27b/vllm/compose/dual-turbo.yml` (Qwen dual + TQ3)
+- `models/gemma-4-31b/vllm/compose/dual.yml` (Gemma dual default — bf16 + MTP — different config from Qwen's dual.yml, disambiguated by directory)
+- `models/gemma-4-31b/vllm/compose/dual-int8.yml` (Gemma dual + INT8 PTH KV)
+- `models/gemma-4-31b/vllm/compose/single.yml` (Gemma single-card variant)
+
+Filename collisions across model directories are fine — the path itself disambiguates. Registry tags in `scripts/switch.sh` decouple from filenames; rename only the file path in the VARIANTS map and keep tags backward-compatible.
+
+#### Profile schema header (every compose, every time)
+
+Every compose starts with a `Profile (at-a-glance)` block declaring the (Model, Topology, Drafter, KV, Vision, Max-ctx, Genesis) tuple in structured form. Free-form description follows below the schema, not in place of it.
+
+```yaml
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     <name + quant — e.g. "Qwen3.6-27B (Lorbus AutoRound INT4)">
+#   Topology:  <e.g. "Dual 3090 PCIe (TP=2, no NVLink)">
+#   Drafter:   <none | MTP n=N | DFlash n=N | ngram K=N>
+#   KV:        <fp8_e5m2 | bf16 | int8_per_token_head | turboquant_3bit_nc>
+#   Vision:    <yes | no>
+#   Max ctx:   <e.g. 262K>
+#   Genesis:   <none | v7.72.2 | N/A — Genesis is Qwen3-Next-specific>
+#   Status:    <optional — only if not production: ⚠️ PREVIEW / BOOT-OOM / etc.>
+#   Best for:  <one short phrase — what workload this serves; ⭐ for canonical>
+# ---------------------------------------------------------------------------
+# (existing free-form description continues below)
+```
+
+This rule applies to **shipped composes AND local-only test composes** — apply the convention even before deciding whether to ship; it avoids a rename later if the experiment graduates.
+
+When testing a new model, write filenames in `<topology>-<feature>.yml` form from the start (not `<model>-<feature>.yml`). When the model isn't Qwen3-Next, write `Genesis: N/A — Genesis is Qwen3-Next-specific` so readers don't expect Genesis-style perf folds where they don't apply.
+
+#### Where do experimental / unvalidated composes live?
+
+**Same directory as shipped composes, but kept untracked until validation passes.** Don't create a separate `experimental/` subdirectory — the relative paths to `../patches/...` and `../cache/...` are calibrated to the compose dir, and promoting an experiment from a sub-folder would require re-pathing every mount.
+
+Workflow:
+
+1. **Author the compose** in `models/<model>/vllm/compose/<topology>-<feature>.yml` with the standard profile schema header. Mark `Status: ⚠️ EXPERIMENTAL` (or `⚠️ PREVIEW` if quality issues are known) so readers know it's not validated.
+2. **Don't `git add`** until validation passes. The file shows up in `git status` as `??` — that's the signal. `git ls-tree -r HEAD` lists only shipped composes; the gap between that and `ls compose/*.yml` tells you what's pending validation.
+3. **Validation gates** before promoting: `verify-full.sh` 8/8, `verify-stress.sh` 7/7 (or documented failures with rationale), `bench.sh` (numbers added to BENCHMARKS.md), `soak-test.sh SOAK_MODE=continuous` (catches Cliff 2b).
+4. **Promote**: drop the `Status: ⚠️ EXPERIMENTAL` line from the profile schema, `git add`, commit. Cross-rig validation can come later via the `numbers-from-your-rig` issue template.
+
+For **entirely new models** under validation (e.g. "let's try MiniMax-M2.7"): keep the whole `models/<new-model>/` directory untracked until at least one compose validates. Avoid pushing `models/<new-model>/README.md` etc. before there's a working compose to back it up — empty model directories on master signal capability we don't actually have.
+
+References (orphan composes / patches sitting in this state as of 2026-05-09):
+- `models/gemma-4-31b/vllm/compose/dual-awq.yml` — local-only AWQ-4bit weights variant, Status: ⚠️ EXPERIMENTAL
+- `models/gemma-4-31b/vllm/compose/dual-dflash-int8.yml` — Status: ⚠️ EXPERIMENTAL (boots only with vLLM PR #42102 vendored mounts)
+- `models/qwen3.6-27b/vllm/compose/qwopus-bf16mtp.yml` — Status: ⚠️ PREVIEW (41× line repetition + NIAH drop, not production)
+
 ### Documentation
 - Don't create new docs proactively. Most non-obvious things belong in `INTERNALS.md`, `FAQ.md`, `SINGLE_CARD.md`, or `DUAL_CARD.md`. New top-level files only when there's a recurring search miss.
 - Charts: source `.svg` + exported `.png` at retina resolution (≥1500px wide). Markdown embeds use `.png` (clicking opens a viewable image; SVG opens raw XML). Re-generate with `python3 tools/charts/gen-perf.py` and `gen-vram.py` after editing data.
