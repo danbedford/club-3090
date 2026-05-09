@@ -8,6 +8,7 @@
 #   Max ctx:   32K (BF16 ceiling — for 262K use dual-int8.yml)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    ✅ Production
+#   Quality:   56/75 (75%) — TC 60% · IF 87% · SO 87% · DE 100% · RM 40% (--full, 2026-05-09)
 #   Best for:  Gemma 4 dual-card default — vision + tools + balanced TPS ⭐
 # ---------------------------------------------------------------------------
 # Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter

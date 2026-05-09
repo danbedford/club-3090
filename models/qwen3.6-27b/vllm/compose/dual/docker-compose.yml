@@ -8,6 +8,7 @@
 #   Max ctx:   262K (237K single-prompt verified)
 #   Genesis:   none — intentionally Genesis-free (isolation control + fallback)
 #   Status:    ✅ Production
+#   Quality:   56/75 (75%) — TC 67% · IF 87% · SO 87% · DE 100% · RM 33% (--full, 2026-05-09)
 #   Best for:  General-purpose dual-card vision + tools + long-ctx default ⭐
 # ---------------------------------------------------------------------------
 # Dual RTX 3090 — DEFAULT for 2× cards. Qwen3.6-27B + MTP n=3 + fp8 KV + vision.
