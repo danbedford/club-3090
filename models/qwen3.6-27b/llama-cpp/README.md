@@ -35,7 +35,7 @@ MODEL_DIR=/mnt/models/gguf docker compose up -d
 
 Memory budget: 14.5 GB (Q3_K_XL) + 4.5 GB KV @ 262K + 0.8 GB mmproj ≈ 20 GB / 24 GB.
 
-### `docker-compose.concurrent.yml` — 4 parallel slots, vision
+### `single/concurrent.yml` — 4 parallel slots, vision
 
 Trade max context for parallelism. Same image, `--parallel 4` + smaller ctx pool.
 

@@ -31,25 +31,25 @@ RESIDENCY_EMPTY_CACHE_ON_IDLE="${RESIDENCY_EMPTY_CACHE_ON_IDLE:-0}"
 case "$VARIANT" in
   vllm/long-text)
     COMPOSE_DIR="${ROOT_DIR}/models/qwen3.6-27b/vllm/compose"
-    COMPOSE_FILE="docker-compose.long-text.yml"
+    COMPOSE_FILE="single/long-text.yml"
     SERVICE="vllm-qwen36-27b-long-text"
     DEFAULT_PORT="8020"
     ;;
   vllm/long-text-no-mtp)
     COMPOSE_DIR="${ROOT_DIR}/models/qwen3.6-27b/vllm/compose"
-    COMPOSE_FILE="docker-compose.long-text-no-mtp.yml"
+    COMPOSE_FILE="single/long-text-no-mtp.yml"
     SERVICE="vllm-qwen36-27b-long-text-no-mtp"
     DEFAULT_PORT="8021"
     ;;
   vllm/tools-text)
     COMPOSE_DIR="${ROOT_DIR}/models/qwen3.6-27b/vllm/compose"
-    COMPOSE_FILE="docker-compose.tools-text.yml"
+    COMPOSE_FILE="single/tools-text.yml"
     SERVICE="vllm-qwen36-27b-tools-text"
     DEFAULT_PORT="8020"
     ;;
   vllm/dual)
     COMPOSE_DIR="${ROOT_DIR}/models/qwen3.6-27b/vllm/compose"
-    COMPOSE_FILE="docker-compose.dual.yml"
+    COMPOSE_FILE="dual/docker-compose.yml"
     SERVICE="vllm-qwen36-27b-dual"
     DEFAULT_PORT="8010"
     ;;

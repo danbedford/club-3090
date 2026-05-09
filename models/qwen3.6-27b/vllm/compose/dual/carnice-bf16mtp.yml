@@ -32,20 +32,20 @@
 # All dual-card variants in this dir:
 #
 #   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  Topology
-#   docker-compose.dual.yml             262K   2         69 / 89          fp8      ✅      2× PCIe
-#   docker-compose.carnice-bf16mtp.yml  262K   2         72 / 80          fp8      ✅      2× PCIe
-#   docker-compose.multi4.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
-#   docker-compose.multi4-dflash.yml     262K   2         64 / 104         FP16     ✅      4× PCIe
-#   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
-#   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅
-#   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌      2× PCIe
+#   dual/docker-compose.yml             262K   2         69 / 89          fp8      ✅      2× PCIe
+#   dual/carnice-bf16mtp.yml  262K   2         72 / 80          fp8      ✅      2× PCIe
+#   multi4/docker-compose.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
+#   multi4/dflash.yml     262K   2         64 / 104         FP16     ✅      4× PCIe
+#   dual/turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
+#   dual/dflash.yml      185K   1         82 / 125         FP16     ✅
+#   dual/dflash-noviz.yml 200K   1         78 / 127         FP16     ❌      2× PCIe
 #
 # Available on HuggingFace: wasifb/Carnice_V2_27B_INT4_BF16MTP
 # https://huggingface.co/wasifb/Carnice_V2_27B_INT4_BF16MTP
 #
 # Run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f docker-compose.carnice-bf16mtp.yml up -d
+#   docker compose -f dual/carnice-bf16mtp.yml up -d
 # ===========================================================================
 services:
   vllm-carnice-bf16mtp:
@@ -55,22 +55,22 @@ services:
     ports:
       - "${PORT:-8070}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # Patched chat template: tells Carnice to output JSON tool calls
       # inside <tool_call> tags (instead of Qwen3 XML format). Required for
       # `--tool-call-parser hermes` to parse correctly.
-      - ../patches/carnice-chat-template.jinja:/root/.cache/huggingface/carnice-v2-27b-int4-recipe-d-bf16mtp/chat_template.jinja:ro
+      - ../../patches/carnice-chat-template.jinja:/root/.cache/huggingface/carnice-v2-27b-int4-recipe-d-bf16mtp/chat_template.jinja:ro
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
       # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=2
       # on AutoRound W4A16 models where out-dim shards fall below 64.
-      # Vendored in this repo at ../patches/vllm-marlin-pad/ (no host
+      # Vendored in this repo at ../../patches/vllm-marlin-pad/ (no host
       # filesystem dependency). Drops out when vllm#40361 lands upstream.
-      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
-      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      - ../../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn

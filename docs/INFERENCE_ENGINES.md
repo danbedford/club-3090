@@ -184,7 +184,7 @@ All five are actively developed. ktransformers is positioned as research but pro
 | **Reasoning-channel separation** | ✅ qwen3 reasoning parser | ⚠️ Default ON via peg-native + `<think>` parsing → routes to `reasoning_content` field. **Most clients (incl. opencode) ignore this and hang** ([issue #97](https://github.com/noonghunna/club-3090/issues/97)). Workaround: `--reasoning-format none` flag (now default in our `llamacpp/default` compose). | ✅ | ⚠️ | ⚠️ Inherits llama.cpp default |
 | **Streaming tool-call deltas** | ✅ + Anthropic API compat | ✅ | ✅ + Responses API streaming | ⚠️ | ✅ |
 
-**Notes**: SGLang's RadixAttention + native FSM makes structured output the headline strength. Our [bounded-thinking compose](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) uses vLLM's xgrammar; could re-do on SGLang for a probable speedup but vLLM is the daily-driver here.
+**Notes**: SGLang's RadixAttention + native FSM makes structured output the headline strength. Our [bounded-thinking compose](../models/qwen3.6-27b/vllm/compose/single/bounded-thinking.yml) uses vLLM's xgrammar; could re-do on SGLang for a probable speedup but vLLM is the daily-driver here.
 
 ---
 

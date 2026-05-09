@@ -35,11 +35,11 @@
 # Pre-merge dependencies (drop when remaining PR lands in nightly):
 #   1. vLLM PR #41745 — gemma4_assistant model class + Gemma4Proposer.
 #      MERGED 2026-05-06; nightly `1acd67a795...` (2026-05-08+) contains it.
-#      Overlay tree `../patches/vllm-gemma4-mtp/` was removed in the cleanup
+#      Overlay tree `../../patches/vllm-gemma4-mtp/` was removed in the cleanup
 #      commit; this compose still pins the older nightly until the DFlash
 #      overlay (PR #41703 below) is also merged.
 #   2. vLLM PR #41703 — z-lab Gemma 4 DFlash drafter. Still UNMERGED.
-#      Vendored at ../patches/vllm-gemma4-dflash/. Drop entire overlay block
+#      Vendored at ../../patches/vllm-gemma4-dflash/. Drop entire overlay block
 #      when this lands.
 #   3. transformers ≥ 5.8.0 — released 2026-05-05. Post-#41745 nightly ships
 #      it natively; entrypoint upgrade only needed while we stay on the older
@@ -75,32 +75,32 @@ services:
     ports:
       - "${PORT:-8032}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~5-7 min);
       # subsequent boots reuse cached graphs (~3 min).
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
       # ---- vLLM PR #41703 overlay (jianc99/dflash-gemma4-fix branch) ----
       # 12 modified files. RO-mount each over installed vllm paths.
-      # Drop this whole block when PR merges + propagates. Source: ../patches/vllm-gemma4-dflash/
+      # Drop this whole block when PR merges + propagates. Source: ../../patches/vllm-gemma4-dflash/
       # NOTE: this overlay CONFLICTS with the dual.yml overlay (#41745) on
       # speculative.py + gpu_model_runner.py — run only one variant at a time.
-      - ../patches/vllm-gemma4-dflash/config/attention.py:/usr/local/lib/python3.12/dist-packages/vllm/config/attention.py:ro
-      - ../patches/vllm-gemma4-dflash/config/speculative.py:/usr/local/lib/python3.12/dist-packages/vllm/config/speculative.py:ro
-      - ../patches/vllm-gemma4-dflash/model_executor/models/qwen3_dflash.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/qwen3_dflash.py:ro
-      - ../patches/vllm-gemma4-dflash/transformers_utils/configs/speculators/algos.py:/usr/local/lib/python3.12/dist-packages/vllm/transformers_utils/configs/speculators/algos.py:ro
-      - ../patches/vllm-gemma4-dflash/v1/attention/backends/triton_attn.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/backends/triton_attn.py:ro
-      - ../patches/vllm-gemma4-dflash/v1/attention/selector.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/selector.py:ro
+      - ../../patches/vllm-gemma4-dflash/config/attention.py:/usr/local/lib/python3.12/dist-packages/vllm/config/attention.py:ro
+      - ../../patches/vllm-gemma4-dflash/config/speculative.py:/usr/local/lib/python3.12/dist-packages/vllm/config/speculative.py:ro
+      - ../../patches/vllm-gemma4-dflash/model_executor/models/qwen3_dflash.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/qwen3_dflash.py:ro
+      - ../../patches/vllm-gemma4-dflash/transformers_utils/configs/speculators/algos.py:/usr/local/lib/python3.12/dist-packages/vllm/transformers_utils/configs/speculators/algos.py:ro
+      - ../../patches/vllm-gemma4-dflash/v1/attention/backends/triton_attn.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/backends/triton_attn.py:ro
+      - ../../patches/vllm-gemma4-dflash/v1/attention/selector.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/selector.py:ro
       # kv_cache_utils.py — REBASED via Codex (2026-05-06). Now retains
       # main's `resolve_kv_cache_block_sizes` helper while applying PR's
       # KV-sharing changes for DFlash. Confirmed Codex's judgment is correct
       # via py_compile + diff inspection.
-      - ../patches/vllm-gemma4-dflash/v1/core/kv_cache_utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py:ro
-      - ../patches/vllm-gemma4-dflash/v1/core/sched/scheduler.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/scheduler.py:ro
-      - ../patches/vllm-gemma4-dflash/v1/spec_decode/dflash.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/spec_decode/dflash.py:ro
-      - ../patches/vllm-gemma4-dflash/v1/spec_decode/eagle.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/spec_decode/eagle.py:ro
-      - ../patches/vllm-gemma4-dflash/v1/spec_decode/utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/spec_decode/utils.py:ro
-      - ../patches/vllm-gemma4-dflash/v1/worker/gpu_model_runner.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py:ro
+      - ../../patches/vllm-gemma4-dflash/v1/core/kv_cache_utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py:ro
+      - ../../patches/vllm-gemma4-dflash/v1/core/sched/scheduler.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/core/sched/scheduler.py:ro
+      - ../../patches/vllm-gemma4-dflash/v1/spec_decode/dflash.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/spec_decode/dflash.py:ro
+      - ../../patches/vllm-gemma4-dflash/v1/spec_decode/eagle.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/spec_decode/eagle.py:ro
+      - ../../patches/vllm-gemma4-dflash/v1/spec_decode/utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/spec_decode/utils.py:ro
+      - ../../patches/vllm-gemma4-dflash/v1/worker/gpu_model_runner.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py:ro
       # --------------------------------------------------------------------
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}

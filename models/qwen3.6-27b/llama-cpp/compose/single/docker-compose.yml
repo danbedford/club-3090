@@ -25,7 +25,7 @@
 #   - mmproj:  F16 (vision projector, ~0.8 GB)
 #   - Context: 262144 (model max)
 #   - KV:      q4_0 K + q4_0 V
-#   - Slots:   1 (single concurrent request; switch to docker-compose.concurrent.yml for 4)
+#   - Slots:   1 (single concurrent request; switch to single/concurrent.yml for 4)
 #   - FA:      on
 #
 # VRAM budget on 24 GB:
@@ -84,7 +84,7 @@ services:
     ports:
       - "${PORT:-8020}:8080"
     volumes:
-      - "${MODEL_DIR:-../../../../models-cache}:/models:ro"
+      - "${MODEL_DIR:-../../../../../models-cache}:/models:ro"
     entrypoint:
       - bash
       - -c

@@ -38,7 +38,7 @@ Sander shipped Genesis [v7.72.2](https://github.com/Sandermage/genesis-vllm-patc
 
 The 7 Genesis-loaded composes (`docker-compose.yml`, `dual-turbo.yml`, `long-text.yml`, `long-text-no-mtp.yml`, `long-vision.yml`, `bounded-thinking.yml`, `tools-text.yml`) had their volume mounts and entrypoint shell invocations cleaned up; `GENESIS_ENABLE_PN59_STREAMING_GDN=1` was added to all 7 for consistency.
 
-`docker-compose.dual.yml` is intentionally left **Genesis-free** as a debugging fallback for cross-engine bisect — useful when isolating "is this a Genesis bug or upstream vLLM bug" during silent-empty / OOM triage.
+`dual/docker-compose.yml` is intentionally left **Genesis-free** as a debugging fallback for cross-engine bisect — useful when isolating "is this a Genesis bug or upstream vLLM bug" during silent-empty / OOM triage.
 
 **Bench results** (dual-turbo, 2× 3090):
 
@@ -76,7 +76,7 @@ The mechanism: TQ3 KV trades 0.375 bytes/cached-token (smallest KV pool → most
 - `docs/HARDWARE.md` — "Note for sub-24 GB cards" section extended with the TQ3→fp8_e5m2 swap rule, byte math, attribution to @efschu, cross-link to #47
 - `docs/CLIFFS.md` — new subsection "KV format choice tunes the boundary" under Cliff 2 root-cause explanation; generalizes from the specific 20 GB finding to the principle
 - `docs/DUAL_CARD.md` — `dual-turbo` picker row gets an inline pointer to the override
-- `models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml` — inline comment near the `--kv-cache-dtype turboquant_3bit_nc` line so users overriding via env or fork have the rationale at hand
+- `models/qwen3.6-27b/vllm/compose/dual/turbo.yml` — inline comment near the `--kv-cache-dtype turboquant_3bit_nc` line so users overriding via env or fork have the rationale at hand
 
 This is a **hardware-class lesson, not a bug fix**. The `dual-turbo.yml` defaults are correct for the canonical hardware. The override path is now discoverable from every doc surface a user would land on when hitting the symptom.
 
@@ -99,7 +99,7 @@ The compose itself is unchanged engine-side — same vLLM image, same Genesis st
 Phase 3 also recontextualized Phase 2's n=30 finding: **PROMPT_TERSE loses on the long tail at scale** (82.2% combined, −10 net vs the FSM-enforced grammars at 214 problems). The right framing isn't "prompting never helps" — PT still rescues HE/151 and ties DeepSeek on the 6-problem prior-regression cluster, so it's competitive on the rigid-FSM-fail class. The defensible claim is *prompt-only shaping lacks the long-tail reliability needed across the full distribution*. Phase 1 reproducibility is exact (HE+ Δ +4.3pp, LCB Δ +24.0pp — both match Phase 1's published numbers).
 
 **Files updated:**
-- `models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml` — docstring rewritten to recommend DeepSeek scratchpad; references all three available grammars + Phase 3 results
+- `models/qwen3.6-27b/vllm/compose/single/bounded-thinking.yml` — docstring rewritten to recommend DeepSeek scratchpad; references all three available grammars + Phase 3 results
 - `tools/grammar-eval/deepseek-scratchpad.gbnf` (NEW; landed earlier in Phase 2)
 - `docs/STRUCTURED_COT.md` — Phase 3 final results, three-grammar decision table, single-compose-with-default-grammar rationale
 - `docs/SINGLE_CARD.md`, `docs/CLIFFS.md`, `docs/EXAMPLES.md`, `docs/UPSTREAM.md`, `BENCHMARKS.md` — refreshed to reflect Phase 3 numbers and the single shipped compose
@@ -236,7 +236,7 @@ The +Δpp accuracy gain partly reflects FSM dodging the `max_tokens=4096` trunca
 3. Qwen3.6 chat template auto-prefixes `<think>\n`. Drop the leading literal from upstream grammars when porting.
 
 **Files added:**
-- `models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml` — sister of long-text with the flag baked in
+- `models/qwen3.6-27b/vllm/compose/single/bounded-thinking.yml` — sister of long-text with the flag baked in
 - `docs/STRUCTURED_COT.md` — public writeup with bench, usage, caveats
 - `models/qwen3.6-27b/vllm/diagnostics/structured-cot-bench.md` — internal diagnostics with full setup details and port findings
 
@@ -262,7 +262,7 @@ Investigation found PN12 was silently no-op'd on dev205+: its anchor expected `@
 - `patch_pn12_ffn_pool_anchor.py` — class-scoped anchor fix that actually patches `SiluAndMul.forward_cuda` with PN12's pooled-output body, env-gated by the existing `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`.
 - `patch_fa_max_seqlen_clamp.py` — local P104 sidecar (Genesis pin doesn't ship P104 yet).
 
-Both wired into `docker-compose.long-text.yml` after `apply_all`.
+Both wired into `single/long-text.yml` after `apply_all`.
 
 **Verified on RTX 3090 single-card (2026-04-30 PM):**
 - `--max-model-len 205000`, `--max-num-batched-tokens 4128`, `--num-gpu-blocks-override 50`, MTP n=3
@@ -382,7 +382,7 @@ We didn't push to the full 262K (per-card VRAM was already 23.5 GB at 237K, leav
 ## 2026-04-29 — Genesis bumped to v7.62.x + PN8 enabled on FP8 paths
 
 - **`scripts/setup.sh`** — `GENESIS_PIN` bumped from `bf667c7` (v7.54) → `917519b` (v7.62.x release, 2026-04-29). Includes Sandermage's PN8 (MTP draft online-quant propagation, backport of vllm#40849), PN11 (Quentin-M streaming tool-call IndexError fix vllm#41142), per-GPU profile auto-recommendations, and TurboQuant k8v4 unlocked on hybrid GDN via P4+P98.
-- **PN8 enabled on FP8 paths only** (`docker-compose.tools-text.yml` + `docker-compose.fast-chat.yml`). Cross-rig validation on 3090 measured ~800-900 MiB freed at boot, **Cliff 1 closes on `tools-text.yml`** (25K-token tool prefill no longer OOMs). TPS cost is real but small (~−5% narr / −7% code).
+- **PN8 enabled on FP8 paths only** (`single/tools-text.yml` + `docker-compose.fast-chat.yml`). Cross-rig validation on 3090 measured ~800-900 MiB freed at boot, **Cliff 1 closes on `tools-text.yml`** (25K-token tool prefill no longer OOMs). TPS cost is real but small (~−5% narr / −7% code).
 - **PN8 deliberately NOT enabled** on TQ3 paths (`docker-compose.yml` default 48K, `long-vision.yml`, `long-text.yml`). Tested 2026-04-29:
   - Default 48K + 0.92: PN8 is no-op (KV pool unchanged, plenty of activation headroom already)
   - long-vision 192K + 0.98: PN8 grows KV pool by 230 MiB and lifts engine ceiling 192K → 198K, but does NOT close Cliff 1 (the 138 MiB allocate is an FFN intermediate-buffer activation peak, not draft-model footprint)
@@ -411,7 +411,7 @@ Polish pass after the launch tweet went live. All click-through paths now lead s
 - **`docs/img/performance.svg`** + **`docs/img/performance.png`** — TPS bar chart across 10 single + dual configs, embedded in top-level README.
 - **`models/qwen3.6-27b/llama-cpp/compose/`** — two new docker compose files using `ghcr.io/ggml-org/llama.cpp:server-cuda`:
   - `docker-compose.yml` — single slot, 262K ctx, q4_0 KV, vision on (showcase)
-  - `docker-compose.concurrent.yml` — 4 parallel slots, 192K ctx pool, vision on
+  - `single/concurrent.yml` — 4 parallel slots, 192K ctx pool, vision on
 - **First measured TPS for UD-Q3_K_XL on this stack:** 21.22 narr / 20.79 code @ 262K + vision (single 3090, q4_0 KV). Lower than 2026-04-23's 28.5 measurement on Q4_K_M — investigating mainline llama.cpp regression between commits `9ab47e7d8` and current `0d0764dfd`. ngram-mod path measured at 22.04 / 26.11 (+25% on code).
 
 ## 2026-04-28 — Repo created (consolidating + superseding old single + dual repos)

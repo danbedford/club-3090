@@ -12,7 +12,7 @@
 # Dual RTX 3090 with NVLink + DFlash — TP=2 + DFlash N=5 spec-decode + 185K ctx
 # + vision + NVLink P2P for faster allreduce.
 #
-# Mirrors docker-compose.dual-dflash.yml but enables NCCL P2P over NVLink and
+# Mirrors dual/dflash.yml but enables NCCL P2P over NVLink and
 # re-enables vLLM's custom all-reduce kernel (which dual-dflash.yml disables
 # for PCIe-only stacks). Combines DFlash N=5 draft model with NVLink bridge
 # for maximum single-stream code throughput on 2x 3090.
@@ -50,25 +50,25 @@
 #   - 2x RTX 3090 (Ampere SM 8.6) WITH NVLink bridge installed and `nvidia-smi
 #     topo -m` showing `NV*` between GPU0 and GPU1
 #   - vLLM PR #40361 (Marlin pad-sub-tile-n) — patched files vendored in-repo
-#     at ../patches/vllm-marlin-pad/. PR is open upstream; drop the mount when
-#     it lands. See ../patches/vllm-marlin-pad/README.md.
+#     at ../../patches/vllm-marlin-pad/. PR is open upstream; drop the mount when
+#     it lands. See ../../patches/vllm-marlin-pad/README.md.
 #
 # All dual-card variants in this dir:
 #
 #   File                                    Ctx    Streams   Narr/Code TPS   KV       Vision  NVLink
-#   docker-compose.dual.yml (DEFAULT)       262K   2         69 / 89          fp8      ✓      not used
-#   docker-compose.multi4.yml                262K   4         63 / 76          fp8      ✓      not used (4x PCIe)
-#   docker-compose.multi4-dflash.yml         262K   2         64 / 104         FP16     ✓      not used (4x PCIe)
-#   docker-compose.dual-nvlink.yml          262K   2         (community)      fp8      ✓      required
-#   docker-compose.dual-nvlink-turbo.yml    262K   4         101 / 133        TQ3      ✓      required
-#   docker-compose.dual-turbo.yml           262K   4         54 / 73          TQ3      ✓      not used
-#   docker-compose.dual-dflash.yml          185K   1         82 / 125         FP16     ✓      not used
-#   docker-compose.dual-dflash-noviz.yml    200K   1         78 / 127         FP16     ✗      not used
-#   docker-compose.dual-nvlink-dflash.yml   185K   1         (community)      FP16     ✓      required
+#   dual/docker-compose.yml (DEFAULT)       262K   2         69 / 89          fp8      ✓      not used
+#   multi4/docker-compose.yml                262K   4         63 / 76          fp8      ✓      not used (4x PCIe)
+#   multi4/dflash.yml         262K   2         64 / 104         FP16     ✓      not used (4x PCIe)
+#   dual/nvlink.yml          262K   2         (community)      fp8      ✓      required
+#   dual/nvlink-turbo.yml    262K   4         101 / 133        TQ3      ✓      required
+#   dual/turbo.yml           262K   4         54 / 73          TQ3      ✓      not used
+#   dual/dflash.yml          185K   1         82 / 125         FP16     ✓      not used
+#   dual/dflash-noviz.yml    200K   1         78 / 127         FP16     ✗      not used
+#   dual/nvlink-dflash.yml   185K   1         (community)      FP16     ✓      required
 #
 # To run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f docker-compose.dual-nvlink-dflash.yml up -d
+#   docker compose -f dual/nvlink-dflash.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b-dual-nvlink-dflash:
@@ -78,16 +78,16 @@ services:
     ports:
       - "${PORT:-8018}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
       # Marlin pad-sub-tile-n (vLLM PR #40361) — vendored in this repo at
-      # ../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
-      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
-      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # ../../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
+      - ../../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn

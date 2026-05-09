@@ -51,24 +51,41 @@ If you're considering enabling a new Genesis env var by default in a shipped com
 - Each variant ships with a **header table** comparing it against sibling composes in the same directory. Update both directions when adding/removing variants.
 - Keep the variant set lean. Three composes that overlap badly (similar TPS + similar context + same KV) is worse than two with a clean differentiation. Removed `fast-chat.yml` 2026-04-29 for exactly this reason.
 
-#### Compose filename convention — `<topology>-<feature>.yml`
+#### Compose layout — `<model>/<engine>/compose/<topology>/<feature>.yml`
 
-The model is implied by the parent directory (`models/<model>/vllm/compose/`); don't repeat it in the filename. Topology is the first segment, feature suffixes follow.
+The directory hierarchy encodes (model, engine, topology); the filename encodes the feature stack. No level repeats information from another.
 
-| Position | Examples | Notes |
+| Path level | Encodes | Examples |
 |---|---|---|
-| Topology prefix | `single` · `dual` · `multi3` · `multi4` · `multi8` | `single` and `dual` have no count ambiguity (always 1 / always 2 GPUs). `multi<N>` requires the count because N varies (3 / 4 / 5 / 6 / 8). Aligns with `docs/SINGLE_CARD.md` / `DUAL_CARD.md` / `MULTI_CARD.md` framing. |
-| Feature suffix(es) | `-nvlink` · `-mtp` · `-dflash` · `-turbo` (TQ3 KV) · `-int8` (INT8 PTH) · `-awq` · `-noviz` | Stacked in conventional order: interconnect → drafter → KV → vision modifier. Example: `dual-nvlink-dflash-noviz.yml` reads as "TP=2, NVLink, DFlash drafter, no vision." |
-| Default-recommended | Drop implicit suffix | Qwen's `dual.yml` *is* MTP+fp8. Only add explicit suffix when there's another drafter/KV variant in the same directory (e.g. Gemma has `dual.yml` + `dual-dflash.yml`, so the default doesn't need `-mtp`). |
+| `models/<model>/` | Model | `qwen3.6-27b` · `gemma-4-31b` |
+| `models/<model>/<engine>/` | Inference engine | `vllm` · `llama-cpp` · `sglang` |
+| `compose/<topology>/` | Hardware topology | `single` · `dual` · `multi3` · `multi4` · `multi8` |
+| `<feature>.yml` (filename) | Feature stack | `docker-compose.yml` (recommended default) · `turbo.yml` · `dflash.yml` · `nvlink-dflash-noviz.yml` |
 
-Examples (post-2026-05-09):
-- `models/qwen3.6-27b/vllm/compose/dual.yml` (Qwen dual default — fp8 + MTP)
-- `models/qwen3.6-27b/vllm/compose/dual-turbo.yml` (Qwen dual + TQ3)
-- `models/gemma-4-31b/vllm/compose/dual.yml` (Gemma dual default — bf16 + MTP — different config from Qwen's dual.yml, disambiguated by directory)
-- `models/gemma-4-31b/vllm/compose/dual-int8.yml` (Gemma dual + INT8 PTH KV)
-- `models/gemma-4-31b/vllm/compose/single.yml` (Gemma single-card variant)
+**Topology rule**: `single` (TP=1) and `dual` (TP=2) have no count ambiguity. `multi<N>` requires the count because N varies (3 / 4 / 5 / 6 / 8). Aligns with `docs/SINGLE_CARD.md` / `DUAL_CARD.md` / `MULTI_CARD.md` doc framing.
 
-Filename collisions across model directories are fine — the path itself disambiguates. Registry tags in `scripts/switch.sh` decouple from filenames; rename only the file path in the VARIANTS map and keep tags backward-compatible.
+**Default-per-topology rule**: each topology subdirectory has a `docker-compose.yml` — the recommended starter. Bare `cd <topology> && docker compose up` works because docker compose finds `docker-compose.yml` automatically. Variants drop the `docker-compose.` prefix because they're explicitly invoked with `-f`.
+
+**Feature suffix order** (when stacking): interconnect → drafter → KV → vision modifier. Examples:
+- `dual/turbo.yml` — TP=2 + TurboQuant KV
+- `dual/dflash.yml` — TP=2 + DFlash drafter
+- `dual/nvlink-dflash-noviz.yml` — TP=2 + NVLink + DFlash + no vision
+- `dual/int8.yml` — TP=2 + INT8 PTH KV
+- `dual/awq.yml` — TP=2 + AWQ-4bit weights
+- `multi4/dflash.yml` — TP=4 + DFlash
+
+Concrete examples (post-2026-05-09 restructure):
+- `models/qwen3.6-27b/vllm/compose/single/docker-compose.yml` — Qwen single-card default
+- `models/qwen3.6-27b/vllm/compose/single/long-text.yml` — Qwen single-card text-only long-ctx variant
+- `models/qwen3.6-27b/vllm/compose/dual/docker-compose.yml` — Qwen dual default (fp8 + MTP)
+- `models/qwen3.6-27b/vllm/compose/dual/turbo.yml` — Qwen dual + TQ3
+- `models/qwen3.6-27b/vllm/compose/multi4/dflash.yml` — Qwen 4-card + DFlash
+- `models/gemma-4-31b/vllm/compose/dual/docker-compose.yml` — Gemma dual default (bf16 + MTP)
+- `models/gemma-4-31b/vllm/compose/dual/int8.yml` — Gemma dual + INT8 PTH KV
+
+Filename collisions across topology dirs (e.g. `dual/dflash.yml` vs `multi4/dflash.yml`) are fine — the path disambiguates. Registry tags in `scripts/switch.sh` decouple from filesystem paths; rename only the file path in the VARIANTS map and keep tags backward-compatible.
+
+**Fine-tune exception**: model-specific fine-tunes that share the canonical model's compose directory keep the fine-tune name as a filename prefix (e.g. `dual/carnice-bf16mtp.yml`, `dual/qwopus-bf16mtp.yml` under `models/qwen3.6-27b/`). Long-term those fine-tunes can graduate to their own model directories (`models/carnice-v2-27b/`, `models/qwopus3.6-27b/`) when their variant set warrants it.
 
 #### Profile schema header (every compose, every time)
 
@@ -92,7 +109,7 @@ Every compose starts with a `Profile (at-a-glance)` block declaring the (Model, 
 
 This rule applies to **shipped composes AND local-only test composes** — apply the convention even before deciding whether to ship; it avoids a rename later if the experiment graduates.
 
-When testing a new model, write filenames in `<topology>-<feature>.yml` form from the start (not `<model>-<feature>.yml`). When the model isn't Qwen3-Next, write `Genesis: N/A — Genesis is Qwen3-Next-specific` so readers don't expect Genesis-style perf folds where they don't apply.
+When testing a new model, create the directory hierarchy from the start: `models/<new-model>/<engine>/compose/<topology>/docker-compose.yml`. The hierarchy enforces the convention; filenames encode only the feature stack within that topology. When the model isn't Qwen3-Next, write `Genesis: N/A — Genesis is Qwen3-Next-specific` in the profile schema so readers don't expect Genesis-style perf folds where they don't apply.
 
 #### Where do experimental / unvalidated composes live?
 
@@ -100,7 +117,7 @@ When testing a new model, write filenames in `<topology>-<feature>.yml` form fro
 
 Workflow:
 
-1. **Author the compose** in `models/<model>/vllm/compose/<topology>-<feature>.yml` with the standard profile schema header. Mark `Status: ⚠️ EXPERIMENTAL` (or `⚠️ PREVIEW` if quality issues are known) so readers know it's not validated.
+1. **Author the compose** in `models/<model>/<engine>/compose/<topology>/<feature>.yml` (or `docker-compose.yml` for the topology default) with the standard profile schema header. Mark `Status: ⚠️ EXPERIMENTAL` (or `⚠️ PREVIEW` if quality issues are known) so readers know it's not validated.
 2. **Don't `git add`** until validation passes. The file shows up in `git status` as `??` — that's the signal. `git ls-tree -r HEAD` lists only shipped composes; the gap between that and `ls compose/*.yml` tells you what's pending validation.
 3. **Validation gates** before promoting: `verify-full.sh` 8/8, `verify-stress.sh` 7/7 (or documented failures with rationale), `bench.sh` (numbers added to BENCHMARKS.md), `soak-test.sh SOAK_MODE=continuous` (catches Cliff 2b).
 4. **Promote**: drop the `Status: ⚠️ EXPERIMENTAL` line from the profile schema, `git add`, commit. Cross-rig validation can come later via the `numbers-from-your-rig` issue template.

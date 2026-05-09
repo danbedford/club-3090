@@ -1,104 +1,86 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
-#   Topology:  Dual 3090 + NVLink (TP=2, NCCL P2P over NVLink)
+#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
 #   Drafter:   MTP n=3 (built-in)
 #   KV:        turboquant_3bit_nc (TQ3, 0.375 bytes/token)
 #   Vision:    yes
 #   Max ctx:   262K
-#   Genesis:   v7.72.2 (full PROD env stack)
-#   Best for:  NVLink + multi-tenant — +11% narr / +12% code over PCIe-only dual-turbo.yml
+#   Genesis:   v7.72.2 (PN59 streaming-GDN + PN34 workspace-lock-relax + PN12)
+#   Best for:  Multi-tenant agent fleet — 4 streams at full ctx (4.67× concurrency vs dual.yml) ⭐
 # ---------------------------------------------------------------------------
-# Dual-card Turbo with NVLink — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3
-# + Genesis v7.72.2 + NVLink P2P.
+# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.69 dev.
 #
-# Mirrors docker-compose.dual-turbo.yml but enables NCCL P2P over NVLink for
-# faster allreduce, re-enables vLLM's custom all-reduce kernel, and drops
-# expandable_segments (which JusefPol reports crashes with NVLink wired).
+# 2026-05-02 PM note: setup.sh now pins Genesis to v7.69 (commit 2db18df) which
+# closes the Cliff 1 mech B issue this header used to warn about (PN25 worker
+# self-install lands default-on in v7.69). The patch_workspace_lock_disable
+# sidecar mounted below is now redundant on v7.69 — Genesis PN34 covers the
+# same surface via env-gate. Drop is queued for the next dual-card validation
+# pass (Cliff 2 doesn't apply on TP=2 so the mount is harmless meanwhile).
 #
-# Status: COMMUNITY-CONTRIBUTED, EXPERIMENTAL.
-#   If you run this, please drop numbers in discussion #19 — paste-ready report
-#   via `bash scripts/report.sh`.
+# The 4-stream concurrent-serving variant. Trades ~22% per-stream TPS vs the
+# fp8 default for ~9× the KV pool capacity, unlocking 4 concurrent streams at
+# full 262K context. Aggregate throughput exceeds fp8 above ~3 concurrent users.
 #
-# The 4-stream concurrent-serving NVLink variant. NVLink lifts the per-token
-# allreduce-latency ceiling that caps PCIe-TP=2 decode; same TQ3 KV path so
-# the 4-stream concurrency budget (lower KV-pool pressure) carries through.
+# Measured (re-bench 2026-04-28 on club-3090, dev205 + Genesis v7.51-stable, TQ3 KV):
+#   53.65 narr (CV 2.7%) / 72.93 code (CV 2.7%) TPS, AL 3.41, VRAM 24.1 GB/card.
 #
-# Measured (2× RTX 3090 w/ NVLink, Genesis v7.69, TQ3 KV — danbedford bench, 2026-05-04):
-#   101.49 narr (CV 2.0%) / 133.20 code (CV 2.3%) wall TPS, VRAM 20.4 GB/card.
-#   NVLink gain over own PCIe-only dual-turbo.yml baseline (~90 / ~120, A/B
-#   tested on same rig): +12.6% narr, +10.7% code. Smaller delta than fp8's
-#   NVLink gain (compare dual-nvlink.yml vs dual.yml, +58% / +56%) because
-#   TQ3 already reduces per-token allreduce volume on PCIe.
-#
-# Genesis v7.69 P65 (cudagraph downgrade for spec-decode) makes MTP × TurboQuant
+# Genesis v7.14 P65 (cudagraph downgrade for spec-decode) makes MTP × TurboQuant
 # work on dual-card TP=2 with vision + tools + 262K. Other relevant patches:
 #   - P4 hybrid turboquant support (replaces standalone PR #39931 patches)
 #   - P5 KV page-size unification for hybrid models
 #   - P64 streaming MTP tool-call edge case
 #   - P66 cudagraph_capture_sizes divisibility filter
-# v7.72.2 native: PN34 (workspace_lock), P78 (tolist guard), PN35 (inputs_embeds).
-#
-# What this gives you (vs the PCIe-only `dual-turbo.yml`):
-#   - NCCL P2P over NVLink (NCCL_P2P_LEVEL=NVL) — faster allreduce on TP=2
-#   - Custom all-reduce ENABLED (--disable-custom-all-reduce removed) — NVLink
-#     makes vLLM's custom kernel a win where PCIe makes it a loss
-#   - PYTORCH_CUDA_ALLOC_CONF without `expandable_segments:True` — JusefPol
-#     reports it crashes on startup with NVLink wired up
-#
-# Dependencies:
-#   - 2× RTX 3090 (Ampere SM 8.6) WITH NVLink bridge installed and `nvidia-smi
-#     topo -m` showing `NV*` between GPU0 and GPU1
-#   - vLLM PR #40361 (Marlin pad-sub-tile-n) — patched files vendored in-repo
-#     at ../patches/vllm-marlin-pad/. PR is open upstream; drop the mount when
-#     it lands. See ../patches/vllm-marlin-pad/README.md.
+# Plus patch_tolist_cudagraph.py for the .tolist() crash class.
 #
 # KV cache: turboquant_3bit_nc — 3-bit symmetric K and V (~3 bits average per
 # token). Aligned with the single-card v714 default config we test extensively.
+# The predecessor dual-3090 file shipped `turboquant_k8v4` (~6 bits avg) due to
+# config drift from the documented + tested target; corrected here to match
+# what's actually validated. Cross-rig users may see slightly higher concurrency
+# at 262K than the predecessor's published 4.59× (TQ3 is more compact than k8v4).
 #
 # To run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f docker-compose.dual-nvlink-turbo.yml up -d
+#   docker compose -f dual/turbo.yml up -d
 # ===========================================================================
 services:
-  vllm-qwen36-27b-dual-nvlink-turbo:
+  vllm-qwen36-27b-dual-turbo:
     image: vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada
-    container_name: vllm-qwen36-27b-dual-nvlink-turbo
+    container_name: vllm-qwen36-27b-dual-turbo
     restart: "no"
     ports:
-      - "${PORT:-8017}:8000"
+      - "${PORT:-8011}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
       # Marlin pad-sub-tile-n (vLLM PR #40361) — vendored in this repo at
-      # ../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
-      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
-      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # ../../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
+      - ../../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
       # Genesis modular package (auto-checked-out at pin in scripts/setup.sh).
       # As of v7.72.2: PN35 supersedes patch_inputs_embeds_optional.py,
       # P78 supersedes patch_tolist_cudagraph.py, PN34 supersedes
       # patch_workspace_lock_disable.py — those local sidecars dropped
       # from this compose 2026-05-05.
-      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
-      - ../patches/local/qwen3coder_tool_parser_deferred_commit.py:/patches/qwen3coder_tool_parser_deferred_commit.py:ro
+      - ../../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ../../patches/local/qwen3coder_tool_parser_deferred_commit.py:/patches/qwen3coder_tool_parser_deferred_commit.py:ro
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
-      # NVLink bridge present — let NCCL use P2P (don't disable it the way
-      # dual-turbo.yml does for PCIe-only stacks) and pin the P2P level to
-      # NVLink so NCCL doesn't fall back to PCIe paths if topology query is fuzzy.
       - NCCL_CUMEM_ENABLE=0
-      - NCCL_P2P_LEVEL=NVL
+      - NCCL_P2P_DISABLE=1
       - VLLM_NO_USAGE_STATS=1
       - VLLM_USE_FLASHINFER_SAMPLER=1
       - OMP_NUM_THREADS=1
-      # JusefPol report (PR #31): expandable_segments=True crashes on startup
-      # with NVLink wired in. Keep max_split_size_mb cap, drop the rest.
-      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      # expandable_segments:True crashes boot on some setups (likely cuMemMap path).
+      # Known: JusefPol on NVLink (PR #31), WSL2 single-card 3090 Ti.
+      # Override via .env: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
       - VLLM_MARLIN_USE_ATOMIC_ADD=1
       - TRITON_CACHE_DIR=/root/.triton/cache
@@ -136,7 +118,7 @@ services:
       - GENESIS_ENABLE_P83=1
       # P85 dropped 2026-05-03 (requires P84 which we don't enable in v7.69)
       # P87 (marlin pad-sub-tile-n text-patch) disabled because the same fix is
-      # already vendored at ../patches/vllm-marlin-pad/marlin.py and RO-mounted
+      # already vendored at ../../patches/vllm-marlin-pad/marlin.py and RO-mounted
       # over the target file (lines 53-54). Letting Genesis re-do the patch fails
       # with [Errno 30] read-only filesystem and `set -e` propagates exit-1 from
       # `apply_all` before `vllm serve` runs (club-3090 #49).
@@ -229,9 +211,7 @@ services:
       - float16
       - --tensor-parallel-size
       - "2"
-      # Custom all-reduce ENABLED (no --disable-custom-all-reduce) — NVLink
-      # makes vLLM's custom kernel a win. dual-turbo.yml disables it because
-      # PCIe P2P bandwidth makes the NCCL fallback faster there.
+      - --disable-custom-all-reduce
       - --max-model-len
       - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization

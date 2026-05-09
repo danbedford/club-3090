@@ -18,10 +18,10 @@ On a single RTX 3090 running Qwen3.6-27B AutoRound INT4 dense via vLLM long-text
 - **Hardware:** 1× RTX 3090, Ampere SM 8.6, 24 GB, PCIe-only (no NVLink)
 - **Model:** `Lorbus/Qwen3.6-27B-int4-AutoRound` (dense, 27B params, INT4 AutoRound)
 - **Engine:** vLLM nightly `v0.19.2rc1.dev205+g07351e088`
-- **Genesis patches:** P4 hybrid TQ + PN12 anchor sidecar + P104 FA clamp + P101/P103 TurboQuant + tolist cudagraph guard (per `docker-compose.long-text.yml`)
+- **Genesis patches:** P4 hybrid TQ + PN12 anchor sidecar + P104 FA clamp + P101/P103 TurboQuant + tolist cudagraph guard (per `single/long-text.yml`)
 - **KV cache:** TurboQuant 3-bit (`turboquant_3bit_nc`)
 - **Spec-decode:** MTP n=3 (Lorbus draft head)
-- **Compose:** `models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml`
+- **Compose:** `models/qwen3.6-27b/vllm/compose/single/long-text.yml`
 - **Required override (currently uncommitted):** `--structured-outputs-config.enable_in_reasoning true`
 - **Endpoint:** `http://localhost:8020/v1` (single card), `http://localhost:8021/v1` (parallel GPU 1 used for LCB run)
 - **vLLM serve args (full command line from compose):**
@@ -63,7 +63,7 @@ On a single RTX 3090 running Qwen3.6-27B AutoRound INT4 dense via vLLM long-text
 ```bash
 # 1. Boot long-text 218K with enable_in_reasoning=true (currently in long-text.yml)
 cd /opt/ai/github/club-3090/models/qwen3.6-27b/vllm/compose
-MODEL_DIR=/opt/ai/github/qwen36-dual-3090/models docker compose -f docker-compose.long-text.yml up -d
+MODEL_DIR=/opt/ai/github/qwen36-dual-3090/models docker compose -f single/long-text.yml up -d
 
 # 2. Set up the harness
 git clone https://github.com/andthattoo/structured-cot.git ~/structured-cot
@@ -195,7 +195,7 @@ andthattoo's reference setup: **Qwen3.6-35B-A3B MoE Q4_K_M / 1× H100 / llama.cp
 
 vLLM nightly's `--reasoning-parser qwen3` configures `StructuredOutputsConfig.enable_in_reasoning=False` by default. Without an override, `structured_outputs.grammar` only applies to the post-`</think>` content channel — the model thinks freely first, and the grammar only activates after `</think>`. This is the *opposite* of what structured-CoT needs.
 
-**Fix:** add `--structured-outputs-config.enable_in_reasoning true` to the vLLM command. Currently a temporary edit on `long-text.yml` line 162-167 that needs a decision on whether to keep, revert, or split into a `docker-compose.bounded-thinking.yml` variant.
+**Fix:** add `--structured-outputs-config.enable_in_reasoning true` to the vLLM command. Currently a temporary edit on `long-text.yml` line 162-167 that needs a decision on whether to keep, revert, or split into a `single/bounded-thinking.yml` variant.
 
 ### 2. Legacy `extra_body={"guided_grammar": ...}` is silently dropped
 
@@ -230,7 +230,7 @@ When/if user signals "ship it," promote this writeup to a public doc and split t
 | target file | what goes there |
 |---|---|
 | `docs/STRUCTURED_COT.md` | Promoted version of this writeup, minus internal-only sections (caveat #2 reproducibility, file paths, etc) |
-| `docker-compose.bounded-thinking.yml` | Sister compose to long-text with `enable_in_reasoning=true` baked in. Long-text reverts to default-off. |
+| `single/bounded-thinking.yml` | Sister compose to long-text with `enable_in_reasoning=true` baked in. Long-text reverts to default-off. |
 | `BENCHMARKS.md` | New rows under qwen3.6-27b for `bounded-thinking-218K` config: HE+ 92.7% / LCB v6 66% |
 | `docs/USE_CASES.md` | New section: "Cost-bounded coding agent" recommending bounded-thinking when you need to control output token spend |
 | `learnings/qwen3.6-27b.md` | "Structured-CoT works on this stack" finding under the speculative decoding / advanced configs section |

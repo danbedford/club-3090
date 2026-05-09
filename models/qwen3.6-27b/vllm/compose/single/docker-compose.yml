@@ -81,10 +81,10 @@
 # Variant matrix (measured on dev205 + Genesis v7.54):
 #
 #   docker-compose.yml             (THIS — default)   48K   51/68 TPS  vision  ⭐ Production-safe; below BOTH cliffs
-#   docker-compose.long-vision.yml                    198K   51/68 TPS  vision     Long ctx + vision; Cliff 1 closed via PN12 sidecar; Cliff 2 single-prompt >50K
-#   docker-compose.long-text.yml                      218K   50/66 TPS  no vis     Engine-ceiling text-only at 0.985 mem-util; same Cliff 2 caveat
-#   docker-compose.tools-text.yml                      75K   51/65 TPS  no vis     IDE agents (Cline/Cursor/Copilot) — fp8 KV + PN8 closes Cliff 1
-#   docker-compose.minimal.yml                         32K   32/33 TPS  vision     Simplest stack; no Genesis, no spec-decode
+#   single/long-vision.yml                    198K   51/68 TPS  vision     Long ctx + vision; Cliff 1 closed via PN12 sidecar; Cliff 2 single-prompt >50K
+#   single/long-text.yml                      218K   50/66 TPS  no vis     Engine-ceiling text-only at 0.985 mem-util; same Cliff 2 caveat
+#   single/tools-text.yml                      75K   51/65 TPS  no vis     IDE agents (Cline/Cursor/Copilot) — fp8 KV + PN8 closes Cliff 1
+#   single/minimal.yml                         32K   32/33 TPS  vision     Simplest stack; no Genesis, no spec-decode
 #
 # Upstream tracker: vllm-project/vllm#40880 (Sandermage's root-cause + v7.14
 # patches). Proper kernel fix (P67) designed-but-not-implemented; v7.14 is
@@ -102,16 +102,16 @@ services:
     ports:
       - "${PORT:-8020}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
       # Genesis v7.14 modular package (mounted into vLLM's site-packages).
       # Apply via `python3 -m vllm._genesis.patches.apply_all` at boot.
-      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
-      - ../patches/local/qwen3coder_tool_parser_deferred_commit.py:/patches/qwen3coder_tool_parser_deferred_commit.py:ro
+      - ../../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ../../patches/local/qwen3coder_tool_parser_deferred_commit.py:/patches/qwen3coder_tool_parser_deferred_commit.py:ro
       # Standalone .tolist() cudagraph capture fix — separate bug from P65.
       # Different bug class: P65 fixes cu_seqlens_k=cu_seqlens_q misclassification;
       # this fix guards .tolist() syscalls during capture.
@@ -234,8 +234,8 @@ services:
       - "4128"
       - --kv-cache-dtype
       - turboquant_3bit_nc
-      # For maximum context, switch to docker-compose.long-text.yml (218K, no
-      # vision) or docker-compose.long-vision.yml (198K + vision). Both carry
+      # For maximum context, switch to single/long-text.yml (218K, no
+      # vision) or single/long-vision.yml (198K + vision). Both carry
       # the PN12 anchor sidecar that closes Cliff 1 on TQ3 paths.
       #- --language-model-only
       - --trust-remote-code

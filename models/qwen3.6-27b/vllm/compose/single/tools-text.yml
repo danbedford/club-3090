@@ -25,12 +25,12 @@
 #
 #   Compose file                          Max ctx   Narr/Code TPS   KV     Vision   Status
 #   docker-compose.yml (default)            48K       51 / 68       TQ3    ✅       ⭐ recommended for chat + light tools
-#   docker-compose.tools-text.yml (this)    75K       51 / 65       fp8    ❌       IDE agents — Cline / Cursor / Copilot
-#   docker-compose.minimal.yml              32K       32 / 33       fp8    ✅       no Genesis, no spec-decode, simplest
+#   single/tools-text.yml (this)    75K       51 / 65       fp8    ❌       IDE agents — Cline / Cursor / Copilot
+#   single/minimal.yml              32K       32 / 33       fp8    ✅       no Genesis, no spec-decode, simplest
 #
 # Run with:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f docker-compose.tools-text.yml up -d
+#   docker compose -f single/tools-text.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b:
@@ -40,15 +40,15 @@ services:
     ports:
       - "${PORT:-8020}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
       # Genesis v7.14+ modular package (replaces patch_genesis_unified.py).
-      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
-      - ../patches/local/qwen3coder_tool_parser_deferred_commit.py:/patches/qwen3coder_tool_parser_deferred_commit.py:ro
+      - ../../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ../../patches/local/qwen3coder_tool_parser_deferred_commit.py:/patches/qwen3coder_tool_parser_deferred_commit.py:ro
     environment:
       # - CUDA_VISIBLE_DEVICES=0
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}

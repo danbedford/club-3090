@@ -4,7 +4,7 @@
 #     Cliff 2b fix but doesn't engage on the chunked-prefill code path
 #     24 GB single-card configs are forced to take. Filed at:
 #         https://github.com/Sandermage/genesis-vllm-patches/issues/22
-#     Workarounds: use docker-compose.dual.yml / dual-turbo.yml (TP=2
+#     Workarounds: use dual/docker-compose.yml / dual-turbo.yml (TP=2
 #     escapes the cliff) or llamacpp recipes (different engine, no
 #     Cliff 2b). See docs/CLIFFS.md for the full diagnosis.
 # ===========================================================================
@@ -86,13 +86,13 @@
 #
 #   File                                  Ctx     KV       Vision   Notes
 #   docker-compose.yml (default)          48K     TQ3      ✅       Production-safe; below both cliffs
-#   docker-compose.long-vision.yml (this) 192K    TQ3      ✅       Long ctx + vision; prefill caveats apply
-#   docker-compose.long-text.yml          205K    TQ3      ❌       Long ctx text-only; engine ceiling
-#   docker-compose.tools-text.yml         75K     fp8      ❌       IDE agents — fp8 KV + PN8 closes Cliff 1
+#   single/long-vision.yml (this) 192K    TQ3      ✅       Long ctx + vision; prefill caveats apply
+#   single/long-text.yml          205K    TQ3      ❌       Long ctx text-only; engine ceiling
+#   single/tools-text.yml         75K     fp8      ❌       IDE agents — fp8 KV + PN8 closes Cliff 1
 #
 # Run with:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f docker-compose.long-vision.yml up -d
+#   docker compose -f single/long-vision.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b-long-vision:
@@ -102,14 +102,14 @@ services:
     ports:
       - "${PORT:-8020}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
-      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
-      - ../patches/local/qwen3coder_tool_parser_deferred_commit.py:/patches/qwen3coder_tool_parser_deferred_commit.py:ro
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
+      - ../../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ../../patches/local/qwen3coder_tool_parser_deferred_commit.py:/patches/qwen3coder_tool_parser_deferred_commit.py:ro
       # workspace_lock_disable — relaxes vllm#39226 strict assertion until
       # Sandermage's P98 marker fix lands. v0.20-only requirement.
     environment:

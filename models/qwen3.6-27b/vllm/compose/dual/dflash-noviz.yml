@@ -11,7 +11,7 @@
 # ---------------------------------------------------------------------------
 # Dual-card DFlash text-only — TP=2 + DFlash N=5 + 200K ctx + NO vision.
 #
-# vs `docker-compose.dual-dflash.yml` (the with-vision variant): drops MoonViT
+# vs `dual/dflash.yml` (the with-vision variant): drops MoonViT
 # to free ~0.78 GiB per card → bumps max_model_len 185K → 200K (close to the
 # absolute DFlash ceiling on dual-3090 with FP16 KV).
 #
@@ -23,9 +23,9 @@
 # Same DFlash caveats as dual-dflash.yml apply: single-stream only on the
 # 2-card variants, FP16 KV (no fp8/turbo on DFlash + Ampere), `--dtype
 # bfloat16` for vllm#40334 workaround. If you have NVLink bridge, switch to
-# docker-compose.dual-nvlink-dflash-noviz.yml for faster allreduce. If you
+# dual/nvlink-dflash-noviz.yml for faster allreduce. If you
 # have 4x 3090 and need full 262K context + 2 streams, use
-# docker-compose.multi4-dflash.yml.
+# multi4/dflash.yml.
 #
 # ─── Prerequisite: download the DFlash draft model ──────────────────────
 # Same as dual-dflash.yml — needs `z-lab/Qwen3.6-27B-DFlash` at
@@ -40,7 +40,7 @@
 #
 # To run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f docker-compose.dual-dflash-noviz.yml up -d
+#   docker compose -f dual/dflash-noviz.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b-dual-dflash:
@@ -50,16 +50,16 @@ services:
     ports:
       - "${PORT:-8013}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
       # Marlin pad-sub-tile-n (vLLM PR #40361) — vendored in this repo at
-      # ../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
-      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
-      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # ../../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
+      - ../../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn

@@ -78,10 +78,10 @@
 # Vendored overlays (drop when upstream merges):
 #   1. vLLM PR #40391 — gemma4 per-token-head fp8 KV (rebased onto post-Mamba
 #      main with conflict resolved in gpu/attn_utils.py).
-#      See: ../patches/vllm-pr40391-rebased/README.md
+#      See: ../../patches/vllm-pr40391-rebased/README.md
 #   2. vLLM PR #42006 (whytem) + PR #41991 (the-david-oy) stacked — Gemma 4
 #      tool-parser bug fixes (MTP streaming multi-tool + parser bounds).
-#      See: ../patches/vllm-gemma4-tool-parser-fixes/README.md
+#      See: ../../patches/vllm-gemma4-tool-parser-fixes/README.md
 #
 # Drop both overlays when the corresponding upstream PRs land:
 #   gh api repos/vllm-project/vllm/pulls/40391 --jq '.state, .merged_at'
@@ -96,25 +96,25 @@ services:
     ports:
       - "${PORT:-8032}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~5-7 min);
       # subsequent boots reuse cached graphs (~3 min). Separate cache dirs
       # from dual.yml because the overlay file set differs (cudagraph
       # capture would re-key on the patched kernel paths anyway).
-      - ../cache/torch_compile_int8:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton_int8:/root/.triton/cache
+      - ../../cache/torch_compile_int8:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton_int8:/root/.triton/cache
       # ---- vLLM PR #40391 overlay (rebased onto post-Mamba main) ----
       # 7 files: per-token-head fp8 KV support for Gemma 4. Drop when PR merges.
-      - ../patches/vllm-pr40391-rebased/model_executor/layers/attention/attention.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/attention/attention.py:ro
-      - ../patches/vllm-pr40391-rebased/model_executor/models/gemma4.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/gemma4.py:ro
-      - ../patches/vllm-pr40391-rebased/v1/core/kv_cache_utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py:ro
-      - ../patches/vllm-pr40391-rebased/v1/kv_cache_interface.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/kv_cache_interface.py:ro
-      - ../patches/vllm-pr40391-rebased/v1/worker/gpu/attn_utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/attn_utils.py:ro
-      - ../patches/vllm-pr40391-rebased/v1/worker/gpu_model_runner.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py:ro
-      - ../patches/vllm-pr40391-rebased/v1/worker/kv_cache_shape_utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/kv_cache_shape_utils.py:ro
+      - ../../patches/vllm-pr40391-rebased/model_executor/layers/attention/attention.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/attention/attention.py:ro
+      - ../../patches/vllm-pr40391-rebased/model_executor/models/gemma4.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/gemma4.py:ro
+      - ../../patches/vllm-pr40391-rebased/v1/core/kv_cache_utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/core/kv_cache_utils.py:ro
+      - ../../patches/vllm-pr40391-rebased/v1/kv_cache_interface.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/kv_cache_interface.py:ro
+      - ../../patches/vllm-pr40391-rebased/v1/worker/gpu/attn_utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/attn_utils.py:ro
+      - ../../patches/vllm-pr40391-rebased/v1/worker/gpu_model_runner.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py:ro
+      - ../../patches/vllm-pr40391-rebased/v1/worker/kv_cache_shape_utils.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/kv_cache_shape_utils.py:ro
       # ---- Gemma 4 tool-parser stacked fixes (PR #42006 + PR #41991) ----
       # 1 file: MTP streaming multi-tool + parser bounds. Drop when both PRs merge.
-      - ../patches/vllm-gemma4-tool-parser-fixes/tool_parsers/gemma4_tool_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/tool_parsers/gemma4_tool_parser.py:ro
+      - ../../patches/vllm-gemma4-tool-parser-fixes/tool_parsers/gemma4_tool_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/tool_parsers/gemma4_tool_parser.py:ro
       # --------------------------------------------------------------------
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}

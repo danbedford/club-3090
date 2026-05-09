@@ -37,7 +37,7 @@
 #   ❌ You need max single-stream TPS (more slots = some latency floor)
 #
 # Quick start: same as default, plus:
-#   docker compose -f docker-compose.concurrent.yml up -d
+#   docker compose -f single/concurrent.yml up -d
 #
 # Env overrides identical to default — see docker-compose.yml header.
 
@@ -49,7 +49,7 @@ services:
     ports:
       - "${PORT:-8020}:8080"
     volumes:
-      - "${MODEL_DIR:-../../../../models-cache}:/models:ro"
+      - "${MODEL_DIR:-../../../../../models-cache}:/models:ro"
     command: >-
       --host 0.0.0.0
       --port 8080

@@ -28,7 +28,7 @@
 # modes by never enabling spec-decode in the first place.
 #
 # Run:
-#   cd compose && docker compose -f docker-compose.minimal.yml up -d
+#   cd compose && docker compose -f single/minimal.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b-minimal:
@@ -38,12 +38,12 @@ services:
     ports:
       - "${PORT:-8020}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
       # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
       # Closes club-3090 #22.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0

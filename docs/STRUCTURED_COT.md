@@ -94,7 +94,7 @@ cd /path/to/club-3090
 bash scripts/switch.sh vllm/bounded-thinking
 # Or directly:
 cd models/qwen3.6-27b/vllm/compose
-docker compose -f docker-compose.bounded-thinking.yml up -d
+docker compose -f single/bounded-thinking.yml up -d
 ```
 
 Endpoint: `http://localhost:8020/v1` (set `PORT=...` to override).

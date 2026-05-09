@@ -14,31 +14,31 @@ The recommended path for this model. Full features, validated end-to-end via `ve
 cd compose && docker compose up -d
 
 # Single-card frontier 145K — vision on, Cliff 1 closed, Cliff 2 60K closed via v7.69 + #35975
-cd compose && docker compose -f docker-compose.long-vision.yml up -d
+cd compose && docker compose -f single/long-vision.yml up -d
 
 # Single-card 180K text-only — Balanced MTP, 60K single-prompt PASS (default IDE-agent recommendation)
-cd compose && docker compose -f docker-compose.long-text.yml up -d
+cd compose && docker compose -f single/long-text.yml up -d
 
 # Single-card 200K text-only — Max-context, MTP off, 60K single-prompt PASS, more KV pool, slower decode
-cd compose && docker compose -f docker-compose.long-text-no-mtp.yml up -d
+cd compose && docker compose -f single/long-text-no-mtp.yml up -d
 
 # Single-card bounded-thinking — 180K + structured-CoT grammar in reasoning (~30× cheaper think on coding)
-cd compose && docker compose -f docker-compose.bounded-thinking.yml up -d
+cd compose && docker compose -f single/bounded-thinking.yml up -d
 
 # Single-card IDE-agent / long-prompt — 75K + fp8 + no vision (Cline / Cursor / Copilot / RAG)
-cd compose && docker compose -f docker-compose.tools-text.yml up -d
+cd compose && docker compose -f single/tools-text.yml up -d
 
 # Dual-card default — 262K + fp8 + MTP + vision (best general dual-card)
-cd compose && docker compose -f docker-compose.dual.yml up -d
+cd compose && docker compose -f dual/docker-compose.yml up -d
 
 # Dual-card multi-tenant — 4 streams at 262K
-cd compose && docker compose -f docker-compose.dual-turbo.yml up -d
+cd compose && docker compose -f dual/turbo.yml up -d
 
 # Dual-card peak code TPS — DFlash N=5 (78/128 narr/code)
-cd compose && docker compose -f docker-compose.dual-dflash.yml up -d
+cd compose && docker compose -f dual/dflash.yml up -d
 
 # Dual-card Hermes agentic — Carnice fine-tune + BF16 MTP (72/80 narr/code, Hermes tool format)
-cd compose && docker compose -f docker-compose.carnice-bf16mtp.yml up -d
+cd compose && docker compose -f dual/carnice-bf16mtp.yml up -d
 ```
 
 See [the model README's compose table](../README.md#compose-variants-vllm) for the full matrix with TPS numbers and use cases.

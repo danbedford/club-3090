@@ -29,7 +29,7 @@ No `Genesis PN12` marker and no `FFNIntermediateCache` import were present in th
 
 Cause: Genesis PN12's anchor expects the next decorator after `SiluAndMul` to be `@CustomOp.register("silu_and_mul_with_clamp")`. In dev205+ the next section is `MulAndSilu`, so the text patch skips. PN12's `apply()` path reports any non-failed text-patcher result as `"applied"`, which masks the skip.
 
-Local action: added `patch_pn12_ffn_pool_anchor.py`, a repo-local sidecar that patches only `SiluAndMul.forward_cuda` with the PN12 pooled-output body using a class-scoped anchor. It runs after Genesis in `docker-compose.long-text.yml`; runtime pooling remains env-gated by `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`.
+Local action: added `patch_pn12_ffn_pool_anchor.py`, a repo-local sidecar that patches only `SiluAndMul.forward_cuda` with the PN12 pooled-output body using a class-scoped anchor. It runs after Genesis in `single/long-text.yml`; runtime pooling remains env-gated by `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`.
 
 Ephemeral container verification (no vLLM boot) showed:
 
@@ -39,7 +39,7 @@ Ephemeral container verification (no vLLM boot) showed:
 
 ## Local P104 Sidecar
 
-The active Genesis checkout does not contain P104. To avoid a false-positive `GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1` run, added `patch_fa_max_seqlen_clamp.py` as a local sidecar and wired it into `docker-compose.long-text.yml` after Genesis.
+The active Genesis checkout does not contain P104. To avoid a false-positive `GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1` run, added `patch_fa_max_seqlen_clamp.py` as a local sidecar and wired it into `single/long-text.yml` after Genesis.
 
 Runtime behavior is still env-gated by `GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1`; the file patch itself is local and idempotent.
 
@@ -55,7 +55,7 @@ None for this pass. The stop condition was met at `205K`, so memory-history trac
 
 ## 205K Full-Stack Retest
 
-Booted `docker-compose.long-text.yml` with:
+Booted `single/long-text.yml` with:
 
 - `--max-model-len 205000`
 - `--max-num-batched-tokens 4128`

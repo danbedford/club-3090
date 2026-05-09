@@ -310,7 +310,7 @@ echo "[done]    ${count} shards SHA-verified."
 echo ""
 
 # ---------- Optional DFlash draft model ----------
-# Required ONLY for `docker-compose.dual-dflash.yml` / `dual-dflash-noviz.yml`.
+# Required ONLY for `dual/dflash.yml` / `dual-dflash-noviz.yml`.
 # vLLM `method:"dflash"` spec-decode loads this as the draft. The compose
 # expects it at <MODEL_DIR>/qwen3.6-27b-dflash/ (~1.75 GB / card after load).
 #
@@ -381,11 +381,11 @@ echo ""
 case "${MODEL_NAME}" in
   qwen3.6-27b)
     SAMPLE_CONTAINER="vllm-qwen36-27b"
-    SAMPLE_COMPOSE_FLAGS_DUAL=" -f docker-compose.dual.yml"
+    SAMPLE_COMPOSE_FLAGS_DUAL=" -f dual/docker-compose.yml"
     SAMPLE_PORT="8020"
     SAMPLE_MODEL_NAME="qwen3.6-27b-autoround"
     NEXT_STEPS_NOTE="Or dual-card vLLM (Marlin patched files already vendored in-repo):
-  cd models/${MODEL_NAME}/vllm/compose && docker compose -f docker-compose.dual.yml up -d"
+  cd models/${MODEL_NAME}/vllm/compose && docker compose -f dual/docker-compose.yml up -d"
     ;;
   gemma-4-31b)
     SAMPLE_CONTAINER="vllm-gemma-4-31b-mtp"

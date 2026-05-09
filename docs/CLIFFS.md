@@ -155,8 +155,8 @@ Plus MTP-off + 0.95: 60K passes in 504s with full 5+ GiB KV pool — separate "m
 
 | Variant | File | max_model_len | mem-util | MTP | Cliff 2 60K | Use case |
 |---|---|---|---|---|---|---|
-| **Balanced MTP** | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | 180K | 0.93 | ✅ K=3 | ✅ 623s | Default — multi-turn agentic coding |
-| **Max-context safety** | [`long-text-no-mtp.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text-no-mtp.yml) (NEW) | 200K | 0.95 | ❌ off | ✅ 537s | Long single-shot RAG / codebase analysis |
+| **Balanced MTP** | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/single/long-text.yml) | 180K | 0.93 | ✅ K=3 | ✅ 623s | Default — multi-turn agentic coding |
+| **Max-context safety** | [`long-text-no-mtp.yml`](../models/qwen3.6-27b/vllm/compose/single/long-text-no-mtp.yml) (NEW) | 200K | 0.95 | ❌ off | ✅ 537s | Long single-shot RAG / codebase analysis |
 
 Both top out at 60K Cliff 2 ceiling — that's the hardware-physical wall on 24 GB single-card. 90K probes hit OOM (Balanced MTP) or fail to complete in 25-min budget (Max-context). For prompts >60K, route to `dual.yml` (TP=2 splits state) or `llamacpp/default` (262K, different engine).
 

@@ -83,7 +83,7 @@ Run `verify-stress.sh` again + `scripts/bench.sh` for canonical TPS comparison a
 
 ### Step 4 — Land the variant if benches are competitive
 
-If SGLang + DFlash beats or matches vLLM `dual-dflash.yml` on the canonical bench (78-82 narr / 125-127 code TPS on 2× 3090) AND `verify-stress.sh` 7/7 passes AND `SOAK_MODE=continuous` passes, ship as `models/qwen3.6-27b/sglang/compose/docker-compose.dual.yml` and add a BENCHMARKS row.
+If SGLang + DFlash beats or matches vLLM `dual-dflash.yml` on the canonical bench (78-82 narr / 125-127 code TPS on 2× 3090) AND `verify-stress.sh` 7/7 passes AND `SOAK_MODE=continuous` passes, ship as `models/qwen3.6-27b/sglang/compose/dual/docker-compose.yml` and add a BENCHMARKS row.
 
 If SGLang underperforms vLLM — keep this README as historical context, document the measured delta, and pick vLLM.
 

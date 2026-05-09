@@ -6,7 +6,7 @@ Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and
 
 @syangsao reported opencode hangs indefinitely against `llamacpp/default` despite the server returning 200 with content tokens generated successfully ([#97](https://github.com/noonghunna/club-3090/issues/97)). Diagnosis via curl SSE capture: every delta was in the `reasoning_content` field, never `content` — Qwen3.6's thinking mode emits `<think>` blocks that llama.cpp's peg-native parser routes to `reasoning_content` by default. opencode (and most simple OpenAI-compat clients) ignore `reasoning_content` and wait indefinitely for `content` deltas that never arrive.
 
-**Fix**: added `--reasoning-format ${REASONING_FORMAT:-none}` to `models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml` and `docker-compose.concurrent.yml`. Default `none` collapses thinking into the content stream — opencode and other simple clients work out-of-box. Power users wanting `reasoning_content` separation set `REASONING_FORMAT=auto` in `.env` or shell.
+**Fix**: added `--reasoning-format ${REASONING_FORMAT:-none}` to `models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml` and `single/concurrent.yml`. Default `none` collapses thinking into the content stream — opencode and other simple clients work out-of-box. Power users wanting `reasoning_content` separation set `REASONING_FORMAT=auto` in `.env` or shell.
 
 Cross-rig validated by @syangsao (1× 3090 water, 330W cap, b9014 image): Fix 2 path (`chat_template_kwargs.enable_thinking: false` in opencode config) confirmed unblocked. Fix 1 (server-side flag) is the same root-cause solution applied at the compose layer so every contributor doesn't hit this. Bench numbers from his unblocked session: 28.88 TPS decode / 741 TPS prompt at 45K accumulated context — within Q3_K_XL Qwen3.6 + DeltaNet hybrid expectations.
 
@@ -16,9 +16,9 @@ Companion observation: DeltaNet hybrid prevents prefix-cache reuse across turns 
 
 Two new community-contributed composes from @danbedford for 2× 3090 with NVLink bridge:
 
-- **`docker-compose.dual-nvlink-dflash.yml`** (port 8018) — 185K ctx + DFlash N=5 + vision. NCCL P2P over NVLink + custom_all_reduce ENABLED. Drops `expandable_segments=True` (NVLink startup-crash fix from JusefPol/PR #31). Bench (2× 3090 NVLink, 230W cap): **101.55 / 163.33 narr/code wall TPS** (CV 1.8%/1.9%), **+17% narr / +16% code over his PCIe `dual-dflash` baseline** of 86.62 / 141.02. PASSES verify-full 8/8 + verify-stress 7/7 + continuous soak (0 err, 100% retention).
+- **`dual/nvlink-dflash.yml`** (port 8018) — 185K ctx + DFlash N=5 + vision. NCCL P2P over NVLink + custom_all_reduce ENABLED. Drops `expandable_segments=True` (NVLink startup-crash fix from JusefPol/PR #31). Bench (2× 3090 NVLink, 230W cap): **101.55 / 163.33 narr/code wall TPS** (CV 1.8%/1.9%), **+17% narr / +16% code over his PCIe `dual-dflash` baseline** of 86.62 / 141.02. PASSES verify-full 8/8 + verify-stress 7/7 + continuous soak (0 err, 100% retention).
 
-- **`docker-compose.dual-nvlink-dflash-noviz.yml`** (port 8019) — text-only variant of the above. Drops MoonViT to free ~0.78 GB/card → max_model_len pushed from 185K to **188K**. Empirically determined: 189K had 1/3 success rate (flaky on fresh reboot), 188K is the stable ceiling. Bench: **103.24 / 167.45 narr/code wall TPS** (CV 2.2%/3.6%), **+17% narr / +17% code over PCIe `dual-dflash-noviz` baseline** (88.31 / 142.79). PASSES same validation chain.
+- **`dual/nvlink-dflash-noviz.yml`** (port 8019) — text-only variant of the above. Drops MoonViT to free ~0.78 GB/card → max_model_len pushed from 185K to **188K**. Empirically determined: 189K had 1/3 success rate (flaky on fresh reboot), 188K is the stable ceiling. Bench: **103.24 / 167.45 narr/code wall TPS** (CV 2.2%/3.6%), **+17% narr / +17% code over PCIe `dual-dflash-noviz` baseline** (88.31 / 142.79). PASSES same validation chain.
 
 Both variants registered in `scripts/launch.sh` and `scripts/switch.sh`. Sibling-list headers updated across `dual.yml`, `dual-nvlink.yml`, `dual-dflash.yml`, `dual-dflash-noviz.yml` for cross-reference. Marked **community-contributed, experimental** in headers.
 
@@ -48,7 +48,7 @@ Aligns Qwen3.6-27B configs with Genesis [v7.72.2](https://github.com/Sandermage/
 
 **PN59 added to 7 Genesis-loaded composes** (`docker-compose.yml`, `dual-turbo.yml`, `long-text.yml`, `long-text-no-mtp.yml`, `long-vision.yml`, `bounded-thinking.yml`, `tools-text.yml`) for consistency.
 
-`docker-compose.dual.yml` left intentionally Genesis-free as a debugging fallback for cross-engine bisect.
+`dual/docker-compose.yml` left intentionally Genesis-free as a debugging fallback for cross-engine bisect.
 
 **dual-turbo bench (2× 3090, single-stream)**: 81.21 narr / 108.20 code wall TPS (5 measured runs each, CV 2.3%/0.9%), AL 3.46. **VRAM dropped from 22.1 GB/card → 20.0 GB/card** (PN35 native fold + Sander's audit-pass cleanups).
 
@@ -62,7 +62,7 @@ See cross-cutting [CHANGELOG.md](../../CHANGELOG.md) entry for the full narrativ
 
 ## 2026-05-04 — Carnice-V2-27B + BF16 MTP overlay — new compose variant ⭐
 
-Adds `docker-compose.carnice-bf16mtp.yml`: [kai-os/Carnice-V2-27b](https://huggingface.co/kai-os/Carnice-V2-27b) (Hermes-style agentic fine-tune of Qwen3.6-27B) quantized to INT4 via delta-merge of Lorbus's AutoRound grid, with a BF16 MTP overlay for clean spec-decode acceptance.
+Adds `dual/carnice-bf16mtp.yml`: [kai-os/Carnice-V2-27b](https://huggingface.co/kai-os/Carnice-V2-27b) (Hermes-style agentic fine-tune of Qwen3.6-27B) quantized to INT4 via delta-merge of Lorbus's AutoRound grid, with a BF16 MTP overlay for clean spec-decode acceptance.
 
 **Key findings from the diagnostic push:**
 - Hypothesis B (MTP quant-grid mismatch) accounted for ~70% of the AL gap. Un-quantizing 7 mtp.layers.0.* projections (BF16 overlay) recovered AL from 2.0 → 3.0.
@@ -75,11 +75,11 @@ Adds `docker-compose.carnice-bf16mtp.yml`: [kai-os/Carnice-V2-27b](https://huggi
 - `bench.sh` (n=5): **71.75 narr / 80.35 code wall TPS**, MTP AL 3.02-3.14, TTFT 141ms
 - `soak-test.sh` (8×3 turns): PASS — 0 MiB growth, 0 errors, 101.6% TPS retention
 
-**Compose:** `docker-compose.carnice-bf16mtp.yml`
+**Compose:** `dual/carnice-bf16mtp.yml`
 
 ## 2026-05-03 late PM — `multi4-dflash.yml` TP=4 DFlash validated on 4× RTX 3090 PCIe ⭐
 
-Adds `docker-compose.multi4-dflash.yml`, a 4-card full-context DFlash variant validated on Whamp's 4× RTX 3090 PCIe rig for [club-3090 discussion #26](https://github.com/noonghunna/club-3090/discussions/26). This is a capacity / 262K-code variant, not a replacement for the faster 2-card DFlash short-prompt path.
+Adds `multi4/dflash.yml`, a 4-card full-context DFlash variant validated on Whamp's 4× RTX 3090 PCIe rig for [club-3090 discussion #26](https://github.com/noonghunna/club-3090/discussions/26). This is a capacity / 262K-code variant, not a replacement for the faster 2-card DFlash short-prompt path.
 
 **Config accepted by vLLM pre-check:**
 - `tensor_parallel_size=4`
@@ -103,7 +103,7 @@ Adds `docker-compose.multi4-dflash.yml`, a 4-card full-context DFlash variant va
 
 ## 2026-05-03 PM — `multi4.yml` TP=4 baseline validated on 4× RTX 3090 PCIe ⭐
 
-Adds `docker-compose.multi4.yml`, a measured 4-card fp8/MTP baseline derived from `dual.yml` by scaling tensor parallelism and streams from 2 → 4. Validation came from Whamp's 4× RTX 3090 PCIe rig in [club-3090 discussion #26](https://github.com/noonghunna/club-3090/discussions/26).
+Adds `multi4/docker-compose.yml`, a measured 4-card fp8/MTP baseline derived from `dual.yml` by scaling tensor parallelism and streams from 2 → 4. Validation came from Whamp's 4× RTX 3090 PCIe rig in [club-3090 discussion #26](https://github.com/noonghunna/club-3090/discussions/26).
 
 **Config accepted by vLLM pre-check:**
 - `tensor_parallel_size=4`
@@ -311,7 +311,7 @@ Other v7.62.x items relevant to us (not yet benched here):
 - **First measured TPS for UD-Q3_K_XL on this stack:** 21.22 narr / 20.79 code @ 262K context + vision (single 3090, q4_0 KV). VRAM 20.17 GB / 24 GB at boot. Lower than memory's 28.5 baseline (Q4_K_M, 2026-04-23 on llama.cpp commit `9ab47e7d8`) — investigating mainline regression vs current `0d0764dfd`. ngram-mod path measured at 22.04 / 26.11 (+25% on code, draftless via `--spec-type ngram-mod`).
 - **llama.cpp Docker compose** at `models/qwen3.6-27b/llama-cpp/compose/`:
   - `docker-compose.yml` — single slot, 262K ctx, q4_0 KV, vision via mmproj. Uses `ghcr.io/ggml-org/llama.cpp:server-cuda`.
-  - `docker-compose.concurrent.yml` — 4 parallel slots, 192K ctx pool, vision. Multi-tenant variant.
+  - `single/concurrent.yml` — 4 parallel slots, 192K ctx pool, vision. Multi-tenant variant.
 - **All three llama.cpp configs pass verify-full + verify-stress** on this stack. Crucial finding: llama.cpp R1 (Q4_K_M @ 262K + q4_0 KV), Q3_K_XL @ 262K + vision, and Q4_K_M + ngram-mod @ 32K all clear the 90K needle ladder + 25K tool-prefill checks. **No Cliff 1, no Cliff 2** — the prefill OOMs that bite vLLM single-card 192K configs don't fire in llama.cpp on this model. Trade is the ~2-3× lower TPS (21 vs 51-55 vLLM). Reframes our launch positioning around "vLLM dual = max throughput, llama.cpp single = max robustness." Single feature gap: llama.cpp doesn't peel `<think>` into `reasoning_content` (parser issue, not model). Tool calling, streaming, vision, output quality all clean on `--jinja`.
 - **`models/qwen3.6-27b/README.md`** — added "VRAM allocation across configs" section with embedded `docs/img/vram-budget-dual.svg`. Per-card stacked bars across 7 configs (3 single, 4 dual) showing weights / KV / vision / DFlash draft / activations / free headroom on the 24 GB budget. Visualizes the TP=2 unlock concretely.
 - **`models/qwen3.6-27b/llama-cpp/README.md`** — quant table updated. UD-Q3_K_XL marked ⭐ as our default with citation to Benjamin Marie's [Kaitchup Q3.6-27B GGUF eval](https://kaitchup.substack.com/p/summary-of-qwen36-gguf-evals-updating) — independent H100-validated pick of Q3_K_XL as the optimal accuracy/efficiency/footprint balance, complementary to our 3090 speed measurements.
@@ -351,8 +351,8 @@ All 4 composes pass `verify-full.sh` functional checks (skipped longctx ladder o
 
 Previously the 192K and 205K opt-in tiers were documented as "edit max-model-len + mem-util in docker-compose.yml" — fragile for reproducibility against published bench numbers. Promoted both to dedicated compose files:
 
-- **`docker-compose.long-vision.yml`** — TQ3 + Genesis P65 + MTP n=3 + 192K + 0.98 mem-util + vision tower active. Matches R3' bench row (50.93 narr / 67.69 code TPS, AL 3.40-3.58 80-86% accept). Container name: `vllm-qwen36-27b-long-vision`. Same prefill caveats as edit-the-default did.
-- **`docker-compose.long-text.yml`** — Same config + `--language-model-only` + max-model-len 205K. Matches R3''' (50.11 narr / 65.84 code TPS). Container name: `vllm-qwen36-27b-long-text`.
+- **`single/long-vision.yml`** — TQ3 + Genesis P65 + MTP n=3 + 192K + 0.98 mem-util + vision tower active. Matches R3' bench row (50.93 narr / 67.69 code TPS, AL 3.40-3.58 80-86% accept). Container name: `vllm-qwen36-27b-long-vision`. Same prefill caveats as edit-the-default did.
+- **`single/long-text.yml`** — Same config + `--language-model-only` + max-model-len 205K. Matches R3''' (50.11 narr / 65.84 code TPS). Container name: `vllm-qwen36-27b-long-text`.
 
 Trade-off: 2 more compose files (now 11 vs 9). Net: every published bench row from the v714 formalization round (R2, R3, R3', R3''', R4, R6, R7) now boots cleanly with one `-f` flag — no error-prone editing for users who want to reproduce. R1 (eager) and R5 (longctx) stay deleted (obsolete, not niche).
 
@@ -366,13 +366,13 @@ Configs migrated from the predecessor repos (`qwen36-27b-single-3090`, `qwen36-d
 |---|---|
 | `qwen36-27b-single-3090/compose/docker-compose.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.yml` |
 | `qwen36-27b-single-3090/compose/docker-compose.fast-chat.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.fast-chat.yml` |
-| `qwen36-27b-single-3090/compose/docker-compose.tools-text.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml` |
+| `qwen36-27b-single-3090/compose/single/tools-text.yml` | `models/qwen3.6-27b/vllm/compose/single/tools-text.yml` |
 | `qwen36-27b-single-3090/compose/docker-compose.no-genesis-mtp.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.no-genesis-mtp.yml` |
-| `qwen36-27b-single-3090/compose/docker-compose.minimal.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.minimal.yml` |
-| `qwen36-dual-3090/compose/docker-compose.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.dual.yml` |
-| `qwen36-dual-3090/compose/docker-compose.turbo.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml` |
-| `qwen36-dual-3090/compose/docker-compose.dflash.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash.yml` |
-| `qwen36-dual-3090/compose/docker-compose.dflash-noviz.yml` | `models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash-noviz.yml` |
+| `qwen36-27b-single-3090/compose/single/minimal.yml` | `models/qwen3.6-27b/vllm/compose/single/minimal.yml` |
+| `qwen36-dual-3090/compose/docker-compose.yml` | `models/qwen3.6-27b/vllm/compose/dual/docker-compose.yml` |
+| `qwen36-dual-3090/compose/docker-compose.turbo.yml` | `models/qwen3.6-27b/vllm/compose/dual/turbo.yml` |
+| `qwen36-dual-3090/compose/docker-compose.dflash.yml` | `models/qwen3.6-27b/vllm/compose/dual/dflash.yml` |
+| `qwen36-dual-3090/compose/docker-compose.dflash-noviz.yml` | `models/qwen3.6-27b/vllm/compose/dual/dflash-noviz.yml` |
 | `qwen36-27b-single-3090/patches/patch_tolist_cudagraph.py` | `models/qwen3.6-27b/vllm/patches/patch_tolist_cudagraph.py` |
 
 Functional content identical — only paths changed. Anyone with scripts referencing the old paths needs to update; the old repos still serve the old paths read-only.
@@ -432,7 +432,7 @@ Genesis v7.14 shipped with the **P65** patch root-causing [vllm#40880](https://g
 
 This shipped as a workaround. The proper fix is a custom multi-query Triton kernel (P67) that handles K+1 query against compressed cached KV under cudagraph capture — designed-but-not-implemented as of v7.14.
 
-The dual-card **Turbo variant** (`docker-compose.dual-turbo.yml`) loads Genesis v7.14 with P64/P65/P66/P68/P69 enabled via env vars. ~25% per-stream TPS regression vs fp8 default but **4.59× concurrency at full 262K vs fp8's 2.36×** — aggregate throughput exceeds fp8 above ~3 concurrent streams.
+The dual-card **Turbo variant** (`dual/turbo.yml`) loads Genesis v7.14 with P64/P65/P66/P68/P69 enabled via env vars. ~25% per-stream TPS regression vs fp8 default but **4.59× concurrency at full 262K vs fp8's 2.36×** — aggregate throughput exceeds fp8 above ~3 concurrent streams.
 
 We adjusted two consumer-Ampere knobs vs Sandermage's A5000-class defaults: `gpu-memory-utilization 0.92 → 0.85` and `max-num-batched-tokens 8192 → 4128`. Without these, deep-prefill (60K+) requests OOM on 24 GB cards.
 
@@ -441,8 +441,8 @@ We adjusted two consumer-Ampere knobs vs Sandermage's A5000-class defaults: `gpu
 [Luce z-lab](https://github.com/luce-spec)'s DFlash spec-decode draft model for Qwen3.6-27B clears verify-full.sh on dual-3090. Single-stream **78 / 128 TPS narr/code** — substantially faster than MTP n=3's 71 / 89.
 
 Two DFlash variants ship in the dual-card path:
-- `docker-compose.dual-dflash.yml` — vision + DFlash N=5 + 185K context
-- `docker-compose.dual-dflash-noviz.yml` — text-only + DFlash N=5 + 200K context
+- `dual/dflash.yml` — vision + DFlash N=5 + 185K context
+- `dual/dflash-noviz.yml` — text-only + DFlash N=5 + 200K context
 
 Required workaround: vllm#40334 (DFlash `combine_hidden_states` dtype mismatch) is open. Compose sets `--dtype bfloat16` to match the draft's training dtype.
 

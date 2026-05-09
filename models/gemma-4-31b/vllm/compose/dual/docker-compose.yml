@@ -53,11 +53,11 @@ services:
     ports:
       - "${PORT:-8030}:8000"
     volumes:
-      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~5-7 min);
       # subsequent boots reuse cached graphs (~3 min). Pattern from dual-turbo.yml.
-      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
-      - ../cache/triton:/root/.triton/cache
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
       # PR #41745 overlay dropped 2026-05-08: merged upstream + nightly contains it.
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
