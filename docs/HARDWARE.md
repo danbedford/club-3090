@@ -155,10 +155,12 @@ How `decode-single` is timed (the new default since 2026-05-07):
 | 3090 | air | llama.cpp default | Qwen3.6 35B-A3B (MoE) Q4_K_XL | 370W (stock) | 136.84 | 136.65 | 0.386 | same — SM climbs smoothly 1875→1905 across 340-370W (NO plateau, unlike dense) |
 | 3090 | air | llama.cpp `prefill-heavy` (35B-A3B MoE) | **prefill-heavy** | **250W** ⭐ | 2461.22 | (n/a) | **9.865** | @noonghunna (MoE prefill knee at SAME 250W as dense — workload-class converges, SM 1380 MHz) |
 | 3090 | air | llama.cpp `prefill-heavy` (35B-A3B MoE) | **prefill-heavy** | 370W (stock) | 2794.36 | (n/a) | 8.363 | same — SM locks at 1680-1710 MHz across 340-370W (boost-clock plateau detected) |
-| 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | **260W** ⭐ | 48.41 | 48.43 | 0.186 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
-| 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 280W | 49.54 | 49.10 | 0.177 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
-| 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 300W | 50.26 | 50.02 | 0.168 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
-| 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 450W (stock) | 52.28 | 52.22 | 0.116 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
+| 4090 | air | llama.cpp `decode-single` | Qwen3.6 27B Q3_K_XL | **260W** ⭐ | 48.26 | 48.16 | 0.186 | [@laurimyllari #62 (38-cap sweep)](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16854218) |
+| 4090 | air | llama.cpp `decode-single` | Qwen3.6 27B Q3_K_XL | 280W | 49.36 | 49.36 | 0.176 | same |
+| 4090 | air | llama.cpp `decode-single` | Qwen3.6 27B Q3_K_XL | 300W | 50.16 | 50.16 | 0.167 | same |
+| 4090 | air | llama.cpp `decode-single` | Qwen3.6 27B Q3_K_XL | 400W (firmware plateau) | 51.96 | 51.96 | 0.132 | same — SM locks 2610 MHz / 392W actual; caps 400-600W functionally identical |
+| 4090 | air | llama.cpp `decode-single` | Qwen3.6 27B Q3_K_XL | 450W (stock) | 51.96 | 51.96 | 0.132 | same — at firmware-plateau, draws 393W not 450W |
+| 4090 | air | llama.cpp `decode-concurrent` N=4 | Qwen3.6 27B Q3_K_XL | **250W** ⭐ | 41.14 | 40.66 | 0.165 | [@laurimyllari #62 (under-load, c=4)](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16854218) — concurrency=4 lower TPS than single-stream on this model, plateau 46 TPS at 400W |
 | 5090 | air | vLLM default | Qwen3.6 27B AutoRound | **400W** ⭐ | 119.98 | 159.23 | 0.300 | [@apnar #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832685) |
 | 5090 | air | vLLM default | Qwen3.6 27B AutoRound | 575W (near-stock) | 119.38 | 159.94 | 0.277 | [@apnar #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832685) |
 | 5090 | air | vLLM `gemma-mtp` (TP=1) | Gemma 4 31B + MTP | **400W** ⭐ | 571.45 | 700.92 | **1.429** | [@apnar #86](https://github.com/noonghunna/club-3090/discussions/86#discussioncomment-16840610) |
@@ -192,7 +194,7 @@ The cross-workload pattern: **both workload classes have efficiency knee at 400W
 
 ![4090 + Qwen3.6-27B + llama.cpp power-cap efficiency curve (laurimyllari)](img/power-cap-4090-qwen36.png)
 
-*4090 air-cooled + Qwen3.6-27B Q3_K_XL + llama.cpp default, 15-cap sweep at 10W resolution (260-400W). Yellow callout: 260W sweet spot (0.186 TPS/W) at 33% below the 4090's 450W stock TDP. **+8% TPS for +54% wattage** going from 260W to 400W — the 4090 is heavily workload-saturated on this single-stream decode path. Source data: [disc #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) (@laurimyllari). Source script: [`img/power-cap-4090-qwen36.py`](img/power-cap-4090-qwen36.py).*
+*4090 air-cooled + Qwen3.6-27B Q3_K_XL + llama.cpp default, 38-cap sweep at 10W resolution (230-600W) covering both `decode-single` and `decode-concurrent` (N=4) load modes. Yellow callout: 260W sweet spot (0.186 TPS/W) at 42% below the 4090's 450W stock TDP. Orange-shaded: caps **400-600W are functionally identical** — firmware boost-clock locks at SM 2610 MHz / 393W actual draw / 51.96 TPS regardless of cap. Decode-concurrent N=4 sits below decode-single across the full envelope on this 27B model: at concurrency=4 the 4090 is in *under-load* territory (model + KV fits comfortably, batching window costs more than it saves vs single-stream on Q3_K_XL). Source data: [disc #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16854218) (@laurimyllari, sweep on `aa99173`). Source script: [`img/power-cap-4090-qwen36.py`](img/power-cap-4090-qwen36.py).*
 
 ![3090 + Qwen3.6-27B + llama.cpp power-cap efficiency curve (noonghunna)](img/power-cap-3090-qwen36.png)
 
