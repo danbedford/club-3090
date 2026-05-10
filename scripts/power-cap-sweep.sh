@@ -22,6 +22,7 @@
 #   sudo bash scripts/power-cap-sweep.sh --load-mode decode-concurrent --concurrency 8 --bench-runs 3
 #   sudo bash scripts/power-cap-sweep.sh --load-mode prefill-heavy
 #   sudo bash scripts/power-cap-sweep.sh --no-reset               # leave at last cap (you reset manually)
+#   sudo bash scripts/power-cap-sweep.sh --include-commit         # stamp club-3090 git short SHA in report header
 #
 # Load modes:
 #   decode-single:
@@ -157,6 +158,10 @@ PREFILL_FILLER_REPEATS=""
 PREFILL_PROMPT_TOKENS=""
 DECODE_CONCURRENT_RUN_SECONDS=""
 CALIBRATION_NOTE=""
+INCLUDE_COMMIT=0      # --include-commit stamps the club-3090 git short SHA in
+                      # the report header. Off by default — `curl ... | bash`
+                      # users have no clone, and stamping "n/a" is confusing
+                      # (better to suppress the field entirely there).
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -171,6 +176,7 @@ while [ $# -gt 0 ]; do
     --load-target) LOAD_TARGET="$2"; shift 2 ;;
     --concurrency-stretch) CONCURRENCY_STRETCH="$2"; shift 2 ;;
     --target-cap-seconds) TARGET_CAP_SECONDS="$2"; shift 2 ;;
+    --include-commit) INCLUDE_COMMIT=1; shift ;;
     --no-reset)    RESET=0; shift ;;
     -h|--help)
       sed -n '1,/^set -euo/p' "$0" | grep '^#' | sed 's/^# \?//'
@@ -1120,7 +1126,17 @@ RESULTS_FILE=/tmp/power-cap-summary.md
   echo "**Model:** \`${MODEL}\` &nbsp; **Engine:** \`${CONTAINER}\` &nbsp; **Endpoint:** ${URL}"
   echo "**Load mode:** \`${LOAD_MODE}\`$([ "$LOAD_MODE" = "decode-single" ] && echo " (${TARGET_CAP_SECONDS}s × 2 timed streams)")$([ "$LOAD_MODE" = "decode-concurrent" ] && echo " (concurrency=${CONCURRENCY}, ${DECODE_CONCURRENT_RUN_SECONDS}s/run × ${BENCH_RUNS} runs × 2 timed batches)")$([ "$LOAD_MODE" = "prefill-heavy" ] && echo " (target-prefill=${TARGET_PREFILL_SECONDS}s, filler_repeats=${PREFILL_FILLER_REPEATS})")$([ "$LOAD_MODE" != "decode-single" ] && echo " (bench-runs=${BENCH_RUNS})")"
   [ -n "$CALIBRATION_NOTE" ] && echo "**Calibration:** ${CALIBRATION_NOTE}"
-  echo "**Date:** $(date -u +%Y-%m-%dT%H:%M:%S)Z"
+  # --include-commit: stamp club-3090 git short SHA next to the date if requested.
+  # Suppress entirely (rather than show "n/a") when run from a non-clone or
+  # when git isn't reachable — closes the curl-pipe-from-docs UX hole.
+  COMMIT_FRAGMENT=""
+  if [ "${INCLUDE_COMMIT:-0}" = "1" ]; then
+    COMMIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || true)
+    if [ -n "$COMMIT_SHA" ]; then
+      COMMIT_FRAGMENT=" &nbsp; **club-3090 commit:** \`${COMMIT_SHA}\`"
+    fi
+  fi
+  echo "**Date:** $(date -u +%Y-%m-%dT%H:%M:%S)Z${COMMIT_FRAGMENT}"
   echo ""
   if [ "$COOLING" = "unspecified" ]; then
     echo "> ⚠️  Cooling class not specified at run time. Add **air / water / AIO** when posting"
