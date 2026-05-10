@@ -66,6 +66,7 @@ services:
       --cont-batching
       --jinja
       --reasoning-format ${REASONING_FORMAT:-none}
+      --chat-template-kwargs ${CHAT_TEMPLATE_KWARGS:-{"enable_thinking":false}}
     deploy:
       resources:
         reservations:

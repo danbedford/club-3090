@@ -274,6 +274,8 @@ services:
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
+      - --chat-template-kwargs
+      - '{"enable_thinking": false}'
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder

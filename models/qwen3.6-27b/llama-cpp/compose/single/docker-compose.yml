@@ -60,7 +60,7 @@
 #                          Override to `auto` to get separate `reasoning_content` field
 #                          (Qwen3.6 thinking trace) — useful for clients that render
 #                          reasoning_content (most don't). Issue: club-3090#97.
-#   DISABLE_THINKING       set to 1 in .env to add `--chat-template-kwargs '{"enable_thinking":false}'`
+#   DISABLE_THINKING       default: 1 (thinking OFF). Set to 0 to opt INTO thinking
 #                          which forces empty <think></think> blocks in responses. Useful for
 #                          clients (e.g. opencode) that display <think> content as the response.
 #                          Tradeoff: applies to ALL clients on this server — Hermes/agents that
@@ -92,7 +92,7 @@ services:
       - -c
       - |
         set -e
-        # DISABLE_THINKING=1 in compose/.env appends --chat-template-kwargs to disable
+        # DISABLE_THINKING=1 (default) appends --chat-template-kwargs to disable
         # Qwen3 thinking server-side. Forces the chat template to insert empty
         # <think></think> blocks → output goes straight to the response. Useful for
         # clients (e.g. opencode) that display <think> content as the response.
@@ -100,7 +100,7 @@ services:
         # use thinking lose reasoning capability. See docs/HARDWARE.md and disc club-3090#97.
         # Note: $$VAR is YAML-escape for $VAR (compose passes literal $ to bash).
         EXTRA_ARGS=()
-        if [ "$${DISABLE_THINKING:-0}" = "1" ]; then
+        if [ "$${DISABLE_THINKING:-1}" = "1" ]; then
           EXTRA_ARGS+=("--chat-template-kwargs" '{"enable_thinking":false}')
           echo "[entrypoint] DISABLE_THINKING=1 — chat template will produce empty <think></think>"
         fi
