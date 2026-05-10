@@ -177,6 +177,19 @@ if [[ -n "$DETECTED_MODEL" && "$DETECTED_MODEL" != "$MODEL" ]]; then
   MODEL="$DETECTED_MODEL"
 fi
 
+# hermesagent-20 runs its agent inside a Docker sandbox container. Localhost-style
+# URLs (localhost/127.x/[::1]) inside the container resolve to the container itself,
+# not the host's vLLM. Auto-set BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1 so benchlocal-cli
+# (a) adds --add-host=host.docker.internal:host-gateway to the sandbox container, and
+# (b) rewrites the model endpoint URL to use host.docker.internal:<port> for the
+# hermes-agent's outbound API calls. Skip if already set (user override) or if URL
+# already uses host.docker.internal / a non-loopback host (real LAN IP, k8s service).
+if [[ -z "${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-}" ]] \
+   && [[ "$URL" =~ ^https?://(localhost|127\.|\[::1\]) ]]; then
+  export BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1
+  echo "[quality-test] localhost URL detected — auto-set BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1 for hermes sandbox endpoint rewrite" >&2
+fi
+
 # ---- run benchlocal-cli ------------------------------------------------------
 
 RESULTS_DIR="${ROOT_DIR}/results/quality"
