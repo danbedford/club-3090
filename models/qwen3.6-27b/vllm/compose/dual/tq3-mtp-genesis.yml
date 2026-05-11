@@ -63,7 +63,15 @@
 # ===========================================================================
 services:
   vllm-qwen36-27b-dual-tq3-mtp-genesis:
-    image: vllm/vllm-openai:nightly-1acd67a795ebccdf9b9db7697ae9082058301657
+    # Pinned to a Genesis v7.72.2 known-good vLLM nightly. The canonical
+    # club-3090 pin (1acd67a79...) is post-#41434 main and is NOT on Genesis's
+    # KNOWN_GOOD_VLLM_PINS allowlist; combined with transformers 5.8.0's
+    # `cached_file` regression, `maybe_override_with_speculators` aborts at
+    # boot with `OSError: Repo id must be in the form 'repo_name'...`.
+    # Hold this older pin (Genesis allowlist: 0.20.2rc1.dev9+g01d4d1ad3)
+    # until Sander tags v7.73.x with a refreshed allowlist for the
+    # post-#41434 main, then re-evaluate.
+    image: vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada
     container_name: vllm-qwen36-27b-dual-tq3-mtp-genesis
     restart: "no"
     ports:
