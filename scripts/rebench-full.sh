@@ -148,6 +148,30 @@ fi
 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu \
   --format=csv,noheader > "$OUT_DIR/gpu-state-start.log" 2>/dev/null || true
 
+# --- rig.txt: hostname, GPUs (nvidia-smi -L), per-card power cap ----------
+{
+  echo "hostname: $(hostname)"
+  nvidia-smi -L 2>/dev/null || true
+  cap_line=$(nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits 2>/dev/null | head -1 || echo "")
+  if [[ -n "$cap_line" ]]; then
+    echo "power_cap_w: ${cap_line%% *}"
+  fi
+} > "$OUT_DIR/rig.txt" 2>/dev/null || true
+
+# --- timings.json: per-phase wall-clock --------------------------------------
+TIMINGS_FILE="$OUT_DIR/timings.json"
+echo "{}" > "$TIMINGS_FILE"
+record_timing() {
+  local phase="$1" secs="$2"
+  python3 -c "
+import json, sys
+p = '$TIMINGS_FILE'
+d = json.load(open(p))
+d['$phase'] = $secs
+json.dump(d, open(p, 'w'))
+" 2>/dev/null || true
+}
+
 # --- helpers ----------------------------------------------------------------
 have_artifact() { [[ -s "$1" ]]; }
 
@@ -166,9 +190,11 @@ run_step() {
   local t0=$(date +%s)
   if "$@" > "$OUT_DIR/$name.log" 2>&1; then
     local dt=$(( $(date +%s) - t0 ))
+    record_timing "$name" "$dt"
     echo "[$name] ✓ ${dt}s — log: $OUT_DIR/$name.log"
   else
     local rc=$? dt=$(( $(date +%s) - t0 ))
+    record_timing "$name" "$dt"
     echo "[$name] ✗ ${dt}s — failed (rc=$rc) — log: $OUT_DIR/$name.log" >&2
     return $rc
   fi
