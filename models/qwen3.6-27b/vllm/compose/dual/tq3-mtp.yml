@@ -1,0 +1,164 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
+#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
+#   Drafter:   MTP n=3 (built-in)
+#   KV:        turboquant_3bit_nc (TQ3) — 3-bit per element
+#   Max ctx:   262144 (262K)
+#   Status:    ⛔ TOMBSTONED 2026-05-11 — NOT shipping. See gap below.
+#   Best for:  Reference / re-test surface once the missing 4 of 5 Genesis
+#              equivalent upstream PRs land.
+# ---------------------------------------------------------------------------
+# 2026-05-11 UPSTREAM-FIX GAP (no Genesis):
+#
+#   TQ3 + MTP on Qwen3-Next requires 5 distinct fixes to work correctly.
+#   Sandermage root-caused all 5 on 2026-04-25 and shipped them as
+#   Genesis v7.14 patches P64 / P65 / P66 / P68 / P69, closing the issue
+#   I filed at vllm-issue#40880 (now closed).
+#
+#   Today's upstream-PR landscape covers only 1 of those 5:
+#     - PR #40914 (OPEN) — K+1 spec-verify routing (analog of one piece)
+#     - PR #40798 (OPEN) — TQ decode workspace pre-allocation (separate
+#       workspace-lock bug; partially required for boot)
+#     - PR #42215 (OPEN) — TQ decode kernel warmup (overlapping with #40798)
+#
+#   The other 4 Genesis patches do not have upstream PR analogs we can
+#   find:
+#     - chunked-prefill `cu_seqlens_k = cu_seqlens_q` first-chunk assumption
+#     - decode-kernel warmup coverage (broader than #42215)
+#     - multi-tool / streaming overlap
+#     - long-context tool reminders / force-tool
+#
+#   Tracking issue vllm#40069 lists "Speculative decoding / Eagle" as
+#   "currently disabled or unverified" for the TurboQuant backend —
+#   upstream acknowledges this is incomplete work.
+#
+#   We attempted a partial stack on 2026-05-11:
+#     - marlin-pad (vllm#40361)
+#     - PR #40798 `gpu_model_runner.py` ONLY (workspace pre-allocation)
+#     - PR #40914 K+1 dispatch block manually rebased onto post-#41434 main
+#
+#   Result: MTP acceptance fully stabilized (100% sustained, AL=4.0,
+#   per-position [1.000, 1.000, 1.000]). But the other 4 missing fixes
+#   surface as: `'crimson axolotl 36'` → `'cr!!!!!!!!!!!!!!!!!!!!!! '`
+#   on long-context needle recall + tool-prefill / multi-turn timeouts +
+#   bench prompts hanging on non-terminating corrupted output. Combined
+#   with 100% drafter-target agreement, this means the K+1 dispatch
+#   path is computing the same wrong attention output on both — i.e.
+#   one fix doesn't compensate for the missing four.
+#
+# Deployable alternatives without Genesis:
+#   - dual/tq3-nomtp.yml  ← validated: 1.73M KV pool, 6.59× concurrency,
+#                            verify-stress all pass, no MTP acceleration
+#   - dual/int8.yml       ← shipping baseline: 605K KV pool, 2.31×, MTP working
+#
+# Deployable alternative WITH Genesis:
+#   - dual/tq3-mtp-genesis.yml  ← uses the full P64/P65/P66/P68/P69 stack
+#                                  via Genesis modular package
+#
+# Drop the tombstone when the 4 missing upstream PRs land OR PR #40914
+# is rebased + fully extended to cover the gap.
+# ===========================================================================
+# Run (only when all 5 upstream fixes are available):
+#   docker compose -f dual/tq3-mtp.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-dual-int8-tq3:
+    # Same vLLM nightly as gemma-4-31b/vllm/compose/dual/int8-tq3.yml — 2026-05-08
+    # cut, post Gemma 4 MTP merge + INT8 PTH KV path (vllm#40391). Pin matches
+    # so head-to-head TPS deltas reflect model intrinsics, not vLLM-version
+    # drift between Qwen and Gemma legs.
+    image: vllm/vllm-openai:nightly-1acd67a795ebccdf9b9db7697ae9082058301657
+    container_name: vllm-qwen36-27b-dual-int8-tq3
+    restart: "no"
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8013}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
+      # Reuse the same torch.compile + Triton kernel caches as dual.yml so
+      # second-boot warm time stays short. The kernel cache is keyed by
+      # (model, kv-dtype, vllm-version) so we share with dual.yml only when
+      # all three match — for int8 vs fp8 the cache won't collide.
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
+      # Marlin pad-sub-tile-n patch (vLLM PR #40361) — still required for
+      # TP=2 on AutoRound W4A16 (drops out when upstream merges).
+      - ../../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # TOMBSTONED: the partial PR #40798 (gpu_model_runner.py) +
+      # manually-rebased PR #40914 (K+1 dispatch) overlays were validated
+      # 2026-05-11 but produce corrupted attention output on long-ctx
+      # (only 1 of 5 needed Genesis fixes is upstream). Patches are
+      # retained in models/qwen3.6-27b/vllm/patches/{vllm-pr40798-rebased,
+      # vllm-pr40914-k1-only} for re-test once upstream PR landscape
+      # extends to cover the gap.
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "2"
+      - --disable-custom-all-reduce
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-2}"
+      - --max-num-batched-tokens
+      - "8192"
+      # INT8 per-token-head KV via vllm#40391 (same as gemma-int8-tq3.yml).
+      # If this errors at boot on Qwen3-Next DeltaNet hybrid attention,
+      # the model may not yet be compatible — fall back to fp8_e5m2 dual.yml.
+      - --kv-cache-dtype
+      - "${KV_DTYPE:-turboquant_3bit_nc}"
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # MTP n — architectural target for Qwen3-Next built-in heads is the
+      # number of physical MTP layers in the model (3 for Qwen3.6 AutoRound
+      # at time of writing). Higher n re-uses the same MTP layer for the
+      # extra draft steps and emits a vLLM warning about reduced acceptance
+      # rate. Use SPEC_N_MAX=4 to A/B against Gemma's n=4.
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

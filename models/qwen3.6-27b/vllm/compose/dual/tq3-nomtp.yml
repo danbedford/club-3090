@@ -1,36 +1,51 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
+#   Model:     Qwen3.6-27B (Lorbus AutoRound INT4)
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
-#   Drafter:   MTP n=3 (built-in, architectural max for Qwen3-Next)
-#   KV:        int8_per_token_head (PTH, via vllm#40391) — 1 byte/token like fp8
-#              but uses PR #40391 quantized-pool path that lets Gemma run at
-#              the same KV class. Created for **matched-config head-to-head
-#              against gemma-int8-tq3.yml** — same vLLM pin, same KV class, same
-#              262K ctx.
-#   Vision:    yes
-#   Max ctx:   262144 (262K — same as fp8 dual.yml)
-#   Genesis:   none (matches dual.yml — intentionally Genesis-free)
-#   Status:    🧪 Experimental — INT8 PTH KV compatibility on Qwen3-Next DeltaNet
-#              hybrid not previously validated on this stack. Boot test + verify-
-#              full + bench before treating as a shipping path.
-#   Best for:  Apples-to-apples comparison with Gemma 4 31B int8-tq3.yml on the
-#              same vLLM nightly + KV class.
+#   Drafter:   none — MTP intentionally disabled
+#   KV:        turboquant_3bit_nc (TQ3, 0.375 bytes/token)
+#   Max ctx:   262144 (262K)
+#   Streams:   max-num-seqs=2 (matched-config sibling of dual/int8.yml)
+#   Genesis:   none — pure upstream nightly + only the unavoidable marlin-pad overlay
+#   Status:    ✅ Working — validated 2026-05-11
+#   Best for:  Long-context multi-tenant agentic workloads where TQ3's KV-pool
+#              expansion matters more than MTP-driven TPS acceleration.
 # ---------------------------------------------------------------------------
-# Run:
-#   docker compose -f dual/int8-tq3.yml up -d
+# Why this compose exists:
+#
+#   TQ3 + MTP on Qwen3-Next requires 5 upstream fixes (Sander's Genesis
+#   P64/P65/P66/P68/P69; see vllm-issue#40880). Only 1 of 5 has a
+#   community-PR analog today (vllm#40914). The Genesis-free TQ3+MTP path is
+#   therefore tombstoned in dual/tq3-mtp.yml — re-test when upstream catches up.
+#
+#   In the meantime, TQ3 KV WITHOUT MTP works perfectly on vanilla upstream
+#   vLLM nightly + only marlin-pad (which we already vendor for AutoRound TP=2
+#   booting). Verify-stress 7/7 pass on the 7-step boundary ladder including
+#   60K and 91K needle recall. The trade is: no MTP TPS acceleration (~67 TPS
+#   raw decode vs ~85 TPS with MTP working at AL=2.31× on INT8 PTH baseline)
+#   but in exchange:
+#     KV pool   = 1,727,935 tokens at 262K (6.59× concurrency)
+#     vs INT8 PTH: 605K (2.31×)  — 2.86× more KV budget per VRAM byte
+#
+#   For workloads where the agent fleet's total in-flight context dominates
+#   per-token latency (multi-tenant code review, long-doc analysis, RAG with
+#   many concurrent sessions), this is the deployable TQ3 path until upstream
+#   bundles the 5 Genesis fixes.
+#
+# To run:
+#   docker compose -f dual/tq3-nomtp.yml up -d
 # ===========================================================================
 services:
-  vllm-qwen36-27b-dual-int8-tq3:
+  vllm-qwen36-27b-dual-int8-tq3-nomtp:
     # Same vLLM nightly as gemma-4-31b/vllm/compose/dual/int8-tq3.yml — 2026-05-08
     # cut, post Gemma 4 MTP merge + INT8 PTH KV path (vllm#40391). Pin matches
     # so head-to-head TPS deltas reflect model intrinsics, not vLLM-version
     # drift between Qwen and Gemma legs.
     image: vllm/vllm-openai:nightly-1acd67a795ebccdf9b9db7697ae9082058301657
-    container_name: vllm-qwen36-27b-dual-int8-tq3
+    container_name: vllm-qwen36-27b-dual-int8-tq3-nomtp
     restart: "no"
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${PORT:-8013}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8014}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # Reuse the same torch.compile + Triton kernel caches as dual.yml so
@@ -43,6 +58,22 @@ services:
       # TP=2 on AutoRound W4A16 (drops out when upstream merges).
       - ../../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
       - ../../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # vLLM PR #40798 overlay — TurboQuant share decode scratch workspace
+      # across layers + reserve max workspace before cudagraph lock.
+      # Bug: vllm-issue#41565 / #41726 / #40420.
+      # WE INTENTIONALLY DO NOT MOUNT THE PR's turboquant_attn.py — that
+      # file in PR #40798's branch is pre-#41434 and would revert the
+      # merged `.tolist()` → CPU-resident-metadata fixes, reintroducing
+      # "Cannot copy CPU/CUDA during cudagraph capture" crashes. We keep
+      # nightly's turboquant_attn.py (which has #41434 fixes) and only
+      # mount the workspace-pre-allocation deltas from PR #40798's other
+      # 2 files. See ../../patches/vllm-pr40798-rebased/README.md.
+      # NOT mounting PR #40798's triton_turboquant_decode.py either — it's
+      # also pre-#41434 and has the old function signature without the
+      # `buf_holder` kwarg that nightly's turboquant_attn.py now passes.
+      # Only the workspace-pre-allocation logic in gpu_model_runner.py is
+      # used; nightly already has the kernel + caller for the rest.
+      - ../../patches/vllm-pr40798-rebased/v1/worker/gpu_model_runner.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py:ro
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
@@ -107,8 +138,6 @@ services:
       # at time of writing). Higher n re-uses the same MTP layer for the
       # extra draft steps and emits a vLLM warning about reduced acceptance
       # rate. Use SPEC_N_MAX=4 to A/B against Gemma's n=4.
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
       - --host
       - 0.0.0.0
       - --port
