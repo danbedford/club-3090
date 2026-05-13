@@ -16,6 +16,21 @@ history; SemVer takes over from `v0.3.0` onward.
 
 ---
 
+## v0.6.0 — 2026-05-13
+
+
+### ✨ Features
+
+- feat(scripts): add hardware-aware setup picker ([12a33fb](https://github.com/noonghunna/club-3090/commit/12a33fbdd1b6422429521f887d9f21c2e3da793d))
+
+
+### 🐛 Bug fixes
+
+- fix(launch): exit cleanly on stdin EOF in wizard prompts ([e05f196](https://github.com/noonghunna/club-3090/commit/e05f1969bcf57547a17cd963a1f21435de80815b))
+
+
+
+[Pin: `git checkout v0.6.0`] · [Full diff](https://github.com/noonghunna/club-3090/compare/v0.5.4...v0.6.0)
 ## v0.5.4 — 2026-05-13
 
 
