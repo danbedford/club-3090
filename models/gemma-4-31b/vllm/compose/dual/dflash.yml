@@ -67,6 +67,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-dflash
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
 services:
@@ -148,7 +149,9 @@ services:
       - --served-model-name
       - gemma-4-31b-autoround
       - --tensor-parallel-size
-      - "2"
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       # DFlash drafter is BF16; --dtype bfloat16 matches its training dtype
       # (same as our existing dual-dflash.yml on Qwen3.6 — vllm#40334 dtype-mismatch
       # workaround until that lands).

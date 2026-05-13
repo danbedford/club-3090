@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 #
-# Interactive launcher for club-3090 — pick engine + workload, boot the
-# right compose, run verify-full to confirm it's serving.
+# Interactive launcher for club-3090 — pick model + GPUs, project the
+# VRAM budget, boot the right compose, run verify-full to confirm it's serving.
 #
 # For first-run users coming in from the README. If you already know
 # what you want, use `scripts/switch.sh <variant>` directly.
 #
 # Usage:
-#   bash scripts/launch.sh                              # interactive hardware-aware wizard
+#   bash scripts/launch.sh                              # interactive model/GPU wizard
 #   bash scripts/launch.sh --variant <name>             # skip wizard, boot directly
-#   bash scripts/launch.sh --engine vllm --cards 1      # partial flags, ask the rest
+#   bash scripts/launch.sh --model qwen3.6-27b --gpus 0,1
+#   bash scripts/launch.sh --engine vllm --cards 1      # deprecated; prefer --gpus
+#   bash scripts/launch.sh --tp 2 --pp 1                # override vLLM parallelism
+#   bash scripts/launch.sh --no-projection              # skip kv-calc budget projection
 #   bash scripts/launch.sh --no-verify                  # skip post-launch verify-full
 #   bash scripts/launch.sh --no-preflight               # skip docker/GPU pre-flight
 #
@@ -26,6 +29,13 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SWITCH="${SWITCH:-${ROOT_DIR}/scripts/switch.sh}"
 VERIFY="${VERIFY:-${ROOT_DIR}/scripts/verify-full.sh}"
+if [[ -z "${MODEL_DIR:-}" && -f "${ROOT_DIR}/.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${ROOT_DIR}/.env"
+  set +a
+fi
+MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models-cache}"
 # shellcheck source=preflight.sh
 source "${ROOT_DIR}/scripts/preflight.sh"
 
@@ -33,13 +43,25 @@ source "${ROOT_DIR}/scripts/preflight.sh"
 ENGINE=""
 CARDS=""
 VARIANT=""
+MODEL_NAME=""
+GPU_ARG=""
+TP_OVERRIDE=""
+PP_OVERRIDE=""
+PARALLELISM="auto"
 SKIP_VERIFY=0
 SKIP_PREFLIGHT=0
+SKIP_PROJECTION=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --engine)  ENGINE="$2"; shift 2 ;;
     --cards)   CARDS="$2"; shift 2 ;;
     --variant) VARIANT="$2"; shift 2 ;;
+    --model)   MODEL_NAME="$2"; shift 2 ;;
+    --gpus)    GPU_ARG="$2"; shift 2 ;;
+    --tp)      TP_OVERRIDE="$2"; shift 2 ;;
+    --pp)      PP_OVERRIDE="$2"; shift 2 ;;
+    --parallelism) PARALLELISM="$2"; shift 2 ;;
+    --no-projection) SKIP_PROJECTION=1; shift ;;
     --no-verify) SKIP_VERIFY=1; shift ;;
     --no-preflight) SKIP_PREFLIGHT=1; shift ;;
     -h|--help)
@@ -72,6 +94,19 @@ ask() {
     read -rp "$p: " reply
     echo "$reply"
   fi
+}
+
+read_or_interrupt() {
+  local prompt="$1"
+  local __reply_var="$2"
+  local reply
+  if ! read -rp "$prompt" reply; then
+    echo "" >&2
+    echo "  EOF on stdin — wizard needs interactive input. Use --variant <name> to skip." >&2
+    kill -INT $$
+    exit 1
+  fi
+  printf -v "$__reply_var" '%s' "$reply"
 }
 
 choose() {
@@ -124,6 +159,59 @@ declare -A LAUNCH_VARIANT_COMPOSE=(
   [vllm/gemma-mtp]="models/gemma-4-31b/vllm/compose/dual/docker-compose.yml"
   [vllm/gemma-mtp-tp1]="models/gemma-4-31b/vllm/compose/single/docker-compose.yml"
   [vllm/gemma-dflash]="models/gemma-4-31b/vllm/compose/dual/dflash.yml"
+  [llamacpp/default]="models/qwen3.6-27b/llama-cpp/compose/single/docker-compose.yml"
+  [llamacpp/concurrent]="models/qwen3.6-27b/llama-cpp/compose/single/concurrent.yml"
+)
+declare -A LAUNCH_VARIANT_MODEL=(
+  [vllm/default]="qwen3.6-27b" [vllm/long-vision]="qwen3.6-27b" [vllm/long-text]="qwen3.6-27b"
+  [vllm/long-text-no-mtp]="qwen3.6-27b" [vllm/bounded-thinking]="qwen3.6-27b" [vllm/tools-text]="qwen3.6-27b"
+  [vllm/minimal]="qwen3.6-27b" [vllm/dual]="qwen3.6-27b" [vllm/dual4]="qwen3.6-27b"
+  [vllm/dual4-dflash]="qwen3.6-27b" [vllm/dual-turbo]="qwen3.6-27b" [vllm/dual-dflash]="qwen3.6-27b"
+  [vllm/dual-dflash-noviz]="qwen3.6-27b" [vllm/dual-nvlink]="qwen3.6-27b" [vllm/dual-nvlink-turbo]="qwen3.6-27b"
+  [vllm/dual-nvlink-dflash]="qwen3.6-27b" [vllm/dual-nvlink-dflash-noviz]="qwen3.6-27b"
+  [vllm/gemma-mtp]="gemma-4-31b" [vllm/gemma-mtp-tp1]="gemma-4-31b" [vllm/gemma-dflash]="gemma-4-31b"
+  [llamacpp/default]="qwen3.6-27b" [llamacpp/concurrent]="qwen3.6-27b"
+)
+declare -A LAUNCH_VARIANT_ENGINE=(
+  [vllm/default]="vllm" [vllm/long-vision]="vllm" [vllm/long-text]="vllm" [vllm/long-text-no-mtp]="vllm"
+  [vllm/bounded-thinking]="vllm" [vllm/tools-text]="vllm" [vllm/minimal]="vllm" [vllm/dual]="vllm"
+  [vllm/dual4]="vllm" [vllm/dual4-dflash]="vllm" [vllm/dual-turbo]="vllm" [vllm/dual-dflash]="vllm"
+  [vllm/dual-dflash-noviz]="vllm" [vllm/dual-nvlink]="vllm" [vllm/dual-nvlink-turbo]="vllm"
+  [vllm/dual-nvlink-dflash]="vllm" [vllm/dual-nvlink-dflash-noviz]="vllm"
+  [vllm/gemma-mtp]="vllm" [vllm/gemma-mtp-tp1]="vllm" [vllm/gemma-dflash]="vllm"
+  [llamacpp/default]="llamacpp" [llamacpp/concurrent]="llamacpp"
+)
+declare -A LAUNCH_VARIANT_KVCALC=(
+  [vllm/default]="qwen3.6-27b:long-vision"
+  [vllm/long-text]="qwen3.6-27b:long-text"
+  [vllm/long-text-no-mtp]="qwen3.6-27b:long-text-no-mtp"
+  [vllm/long-vision]="qwen3.6-27b:long-vision"
+  [vllm/bounded-thinking]="qwen3.6-27b:bounded-thinking"
+  [vllm/tools-text]="qwen3.6-27b:tools-text"
+  [vllm/minimal]="qwen3.6-27b:minimal"
+  [vllm/dual]="qwen3.6-27b:dual"
+  [vllm/dual-turbo]="qwen3.6-27b:dual-turbo"
+  [vllm/dual-dflash]="qwen3.6-27b:dual-dflash"
+  [vllm/dual-dflash-noviz]="qwen3.6-27b:dual-dflash-noviz"
+  [vllm/dual4]="qwen3.6-27b:dual4"
+  [vllm/dual4-dflash]="qwen3.6-27b:dual4-dflash"
+  [vllm/dual-nvlink]="qwen3.6-27b:dual"
+  [vllm/dual-nvlink-turbo]="qwen3.6-27b:dual-turbo"
+  [vllm/dual-nvlink-dflash]="qwen3.6-27b:dual-dflash"
+  [vllm/dual-nvlink-dflash-noviz]="qwen3.6-27b:dual-dflash-noviz"
+  [vllm/gemma-mtp]="gemma-4-31b:gemma-dual"
+  [vllm/gemma-mtp-tp1]="gemma-4-31b:gemma-single"
+  [vllm/gemma-dflash]="gemma-4-31b:gemma-dual-dflash"
+  [llamacpp/default]="SKIP"
+  [llamacpp/concurrent]="SKIP"
+)
+LAUNCH_VARIANT_ORDER=(
+  vllm/long-vision vllm/long-text vllm/long-text-no-mtp vllm/bounded-thinking
+  vllm/default vllm/tools-text vllm/minimal
+  vllm/dual vllm/dual-turbo vllm/dual-dflash vllm/dual-dflash-noviz
+  vllm/dual4 vllm/dual4-dflash
+  vllm/gemma-mtp vllm/gemma-mtp-tp1 vllm/gemma-dflash
+  llamacpp/default llamacpp/concurrent
 )
 
 variant_hw_status() {
@@ -218,126 +306,530 @@ choose_variant() {
   done
 }
 
-# --- wizard ---
-# Flow: cards → workload → auto-pick engine. Newcomers can answer "how
-# many GPUs" and "what do I want to do" but rarely "vLLM or llama.cpp" —
-# so the engine is derived from the workload pick, not asked first.
-# Manual --engine override filters the workload list to that engine.
-if [[ -z "$VARIANT" ]]; then
-  echo ""
-  echo "club-3090 launcher — let's pick the right config for your workload."
-  echo "(Use --variant <name> next time to skip the wizard.)"
-  echo ""
+model_label() {
+  case "$1" in
+    qwen3.6-27b) echo "Qwen 3.6 27B" ;;
+    gemma-4-31b) echo "Gemma 4 31B" ;;
+    *) echo "$1" ;;
+  esac
+}
 
-  # Step 1 — cards.
-  if [[ -z "$CARDS" ]]; then
-    CARDS=$(choose "How many RTX 3090s?" \
-      "1× 3090 (24 GB)"           "1" \
-      "2× 3090 (PCIe / no NVLink)" "2")
+normalize_model_name() {
+  case "$1" in
+    qwen3.6-27b|qwen3.6-27b-gguf) echo "qwen3.6-27b" ;;
+    gemma-4-31b|gemma-4-31b-awq|gemma-4-31b-gguf) echo "gemma-4-31b" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+MODEL_ORDER=()
+declare -A MODEL_ENGINES=()
+
+add_installed_model_engine() {
+  local model="$1" engine="$2"
+  if [[ -z "${MODEL_ENGINES[$model]:-}" ]]; then
+    MODEL_ORDER+=("$model")
+    MODEL_ENGINES[$model]="$engine"
+  elif [[ ",${MODEL_ENGINES[$model]}," != *",${engine},"* ]]; then
+    MODEL_ENGINES[$model]="${MODEL_ENGINES[$model]},${engine}"
   fi
+}
 
-  # Re-validate now that we know the requirement (preflight already ran
-  # with min=1; bump to actual count). Skip if --no-preflight.
-  if [[ $SKIP_PREFLIGHT -eq 0 ]]; then
-    preflight_gpu "$CARDS" || exit 1
-  fi
+detect_installed_models() {
+  MODEL_ORDER=()
+  MODEL_ENGINES=()
+  [[ -d "${MODEL_DIR}/qwen3.6-27b-autoround-int4" ]] && add_installed_model_engine "qwen3.6-27b" "vllm"
+  [[ -d "${MODEL_DIR}/qwen3.6-27b-gguf" ]] && add_installed_model_engine "qwen3.6-27b" "llamacpp"
+  [[ -d "${MODEL_DIR}/gemma-4-31b-autoround-int4" ]] && add_installed_model_engine "gemma-4-31b" "vllm"
+  [[ -d "${MODEL_DIR}/gemma-4-31b-it-AWQ-4bit" ]] && add_installed_model_engine "gemma-4-31b" "vllm"
+  [[ -d "${MODEL_DIR}/gemma-4-31b-gguf" ]] && add_installed_model_engine "gemma-4-31b" "llamacpp"
+  return 0
+}
 
-  # Step 2 — workload, filtered by cards (and --engine override if set).
-  # Each option's value is "engine/file" so engine is implied by the pick.
-  if [[ "$CARDS" == "1" ]]; then
-    # Primary recommended options first; diagnostic / niche variants in
-    # an "Other" group at the end. The only single-card limitation users
-    # need to know: vLLM single-card crashes on a single prompt >50K
-    # (Cliff 2). For unpredictable inputs, use llamacpp/default.
-    if [[ -z "$ENGINE" || "$ENGINE" == "vllm" ]]; then
-      VLLM_OPTS=(
-        "Long ctx + vision (145K + vision, MTP) — recommended for chat/agents"        "vllm/long-vision"
-        "Long ctx, text only — Balanced MTP (180K, MTP K=3) — recommended IDE-agent"  "vllm/long-text"
-        "Long ctx, text only — Max-context (200K, no MTP) — one-shot >50K prompts"    "vllm/long-text-no-mtp"
-        "Bounded thinking (180K, structured-CoT FSM — recommended grammar: DeepSeek scratchpad, 87.4% combined HE+/LCB v6)"  "vllm/bounded-thinking"
-      )
-    else
-      VLLM_OPTS=()
-    fi
-    if [[ -z "$ENGINE" || "$ENGINE" == "llamacpp" ]]; then
-      LLAMA_OPTS=(
-        "Bulletproof, no cliffs (262K + vision, ~21 TPS) — production-safe"        "llamacpp/default"
-      )
-    else
-      LLAMA_OPTS=()
-    fi
-    # Diagnostic / niche fallbacks — shown last so they don't dominate the menu
-    if [[ -z "$ENGINE" || "$ENGINE" == "vllm" ]]; then
-      VLLM_FALLBACK_OPTS=(
-        "[fallback] Default 48K + vision (Cliff 2 unreachable; fast boot)"         "vllm/default"
-        "[fallback] tools-text 75K FP8 (FP8 KV alternative for accuracy compare)"  "vllm/tools-text"
-        "[fallback] minimal 32K (no Genesis, no spec-decode — diagnostic stack)"   "vllm/minimal"
-      )
-      VLLM_DUAL_OPTS=(
-        "[2-card] vllm/dual — 262K + vision + 2 streams"             "vllm/dual"
-        "[2-card] vllm/dual-turbo — 4 streams @ 262K, TQ3 KV"        "vllm/dual-turbo"
-        "[2-card] vllm/dual-dflash — peak code TPS with vision"      "vllm/dual-dflash"
-        "[2-card] vllm/gemma-mtp — Gemma 4 dual-card default"        "vllm/gemma-mtp"
-      )
-    else
-      VLLM_FALLBACK_OPTS=()
-      VLLM_DUAL_OPTS=()
-    fi
-    if [[ -z "$ENGINE" || "$ENGINE" == "llamacpp" ]]; then
-      LLAMA_FALLBACK_OPTS=(
-        "[fallback] llamacpp/concurrent (4 parallel slots, 192K pool, vision)"     "llamacpp/concurrent"
-      )
-    else
-      LLAMA_FALLBACK_OPTS=()
-    fi
-    if [[ -n "$ENGINE" && "$ENGINE" != "vllm" && "$ENGINE" != "llamacpp" ]]; then
-      echo "ERROR: --engine ${ENGINE} unsupported (expected vllm or llamacpp)." >&2
+model_has_engine() {
+  local model="$1" engine="$2"
+  [[ ",${MODEL_ENGINES[$model]:-}," == *",${engine},"* ]]
+}
+
+engine_hint() {
+  case "$1" in
+    vllm,llamacpp|llamacpp,vllm) echo "vLLM + llama.cpp engines available" ;;
+    vllm) echo "vLLM only" ;;
+    llamacpp) echo "llama.cpp only" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+choose_model() {
+  detect_installed_models
+  if [[ -n "$MODEL_NAME" ]]; then
+    MODEL_NAME="$(normalize_model_name "$MODEL_NAME")"
+    if [[ -z "${MODEL_ENGINES[$MODEL_NAME]:-}" ]]; then
+      echo "[launch] ERROR: ${MODEL_NAME} is not installed under ${MODEL_DIR}." >&2
+      echo "[launch]        Run: bash scripts/setup.sh ${MODEL_NAME}" >&2
       exit 1
     fi
-    if [[ "$ENGINE" == "llamacpp" ]]; then
-      DEFAULT_VARIANT="llamacpp/default"
-    else
-      DEFAULT_VARIANT="vllm/long-text"
-    fi
-    VARIANT=$(choose_variant "What's your main workload?" "$DEFAULT_VARIANT" \
-      "${VLLM_OPTS[@]}" "${LLAMA_OPTS[@]}" \
-      "${VLLM_FALLBACK_OPTS[@]}" "${VLLM_DUAL_OPTS[@]}" "${LLAMA_FALLBACK_OPTS[@]}")
-  elif [[ "$CARDS" == "2" ]]; then
-    if [[ -n "$ENGINE" && "$ENGINE" != "vllm" ]]; then
-      echo "ERROR: --engine ${ENGINE} not supported on 2× cards (no llama.cpp dual recipe yet)." >&2
-      exit 1
-    fi
-    VARIANT=$(choose_variant "What's your dual-card priority?" "vllm/dual" \
-      "Balanced default — 262K + vision + 2 streams (recommended)" "vllm/dual" \
-      "Multi-tenant — 4 concurrent streams @ 262K, TQ3 KV"         "vllm/dual-turbo" \
-      "Peak code TPS with vision (185K, DFlash N=5)"               "vllm/dual-dflash" \
-      "Peak code TPS no vision (200K, DFlash N=5)"                 "vllm/dual-dflash-noviz" \
-      "Gemma 4 dual-card default — 32K + vision + MTP"             "vllm/gemma-mtp")
-  else
-    echo "ERROR: --cards ${CARDS} unsupported (expected 1 or 2)." >&2
+    return
+  fi
+  if [[ "${#MODEL_ORDER[@]}" -eq 0 ]]; then
+    echo "[launch] ERROR: no supported model weights found under ${MODEL_DIR}." >&2
+    echo "[launch]        Run: bash scripts/setup.sh" >&2
     exit 1
   fi
+  if [[ "${#MODEL_ORDER[@]}" -eq 1 ]]; then
+    MODEL_NAME="${MODEL_ORDER[0]}"
+    echo "[launch] using installed model: $(model_label "$MODEL_NAME")" >&2
+    return
+  fi
+  echo "" >&2
+  echo "[launch] Installed models:" >&2
+  local i=1 model
+  for model in "${MODEL_ORDER[@]}"; do
+    printf "  %d) %-16s (%s)\n" "$i" "$(model_label "$model")" "$(engine_hint "${MODEL_ENGINES[$model]}")" >&2
+    i=$((i + 1))
+  done
+  while true; do
+    local pick
+    read_or_interrupt "Choice [1-${#MODEL_ORDER[@]}]: " pick
+    if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#MODEL_ORDER[@]} )); then
+      MODEL_NAME="${MODEL_ORDER[$((pick - 1))]}"
+      return
+    fi
+    echo "  invalid — pick a number 1-${#MODEL_ORDER[@]}" >&2
+  done
+}
 
-  # Step 3 — explain the auto-picked engine.
-  echo ""
-  case "$VARIANT" in
-    llamacpp/*)
-      echo "[wizard] picked llama.cpp — chosen because no prefill cliffs at 262K and the simplest"
-      echo "[wizard]   serving path. Trade-off: ~21 TPS vs 70+ on vLLM. Right call for long-prompt"
-      echo "[wizard]   robustness, frontier context, or anyone who wants the simplest setup."
-      ;;
-    vllm/*)
-      echo "[wizard] picked vLLM — chosen for spec-decode (MTP), tool-call extraction, and best TPS."
-      echo "[wizard]   Watch out for the prefill cliffs (Cliff 1 = 25K+ tool returns; Cliff 2 = 50-60K"
-      echo "[wizard]   single prompts on TQ3) — see docs/SINGLE_CARD.md for the safe-config map."
-      ;;
+GPU_LINES=""
+CARD_INDICES=()
+CARD_NAMES=()
+CARD_MEM_MIB=()
+CARD_SM=()
+MIN_VRAM_GB=0
+MAX_VRAM_GB=0
+HET_VRAM_MIXED=0
+SELECTED_GPU_CSV=""
+SELECTED_VRAM_SUMMARY=""
+
+gpu_exists() {
+  local want="$1" idx name mem_mib sm
+  while IFS=$'\t' read -r idx name mem_mib sm; do
+    [[ "$idx" == "$want" ]] && return 0
+  done <<< "$GPU_LINES"
+  return 1
+}
+
+gpu_is_busy() {
+  local want="$1" busy
+  while IFS= read -r busy; do
+    [[ "$busy" == "$want" ]] && return 0
+  done <<< "$(compose_hw_in_use_gpus 2>/dev/null || true)"
+  return 1
+}
+
+append_selected_gpu() {
+  local want="$1" idx name mem_mib sm
+  while IFS=$'\t' read -r idx name mem_mib sm; do
+    if [[ "$idx" == "$want" ]]; then
+      CARD_INDICES+=("$idx")
+      CARD_NAMES+=("$name")
+      CARD_MEM_MIB+=("$mem_mib")
+      CARD_SM+=("$sm")
+      return 0
+    fi
+  done <<< "$GPU_LINES"
+  return 1
+}
+
+select_gpus_from_arg() {
+  local arg="$1"
+  CARD_INDICES=()
+  CARD_NAMES=()
+  CARD_MEM_MIB=()
+  CARD_SM=()
+  local available=() idx name mem_mib sm
+  while IFS=$'\t' read -r idx name mem_mib sm; do
+    [[ -z "$idx" ]] && continue
+    if ! gpu_is_busy "$idx"; then
+      available+=("$idx")
+    fi
+  done <<< "$GPU_LINES"
+  if [[ "$arg" == "all" ]]; then
+    [[ "${#available[@]}" -gt 0 ]] || { echo "[launch] ERROR: no available NVIDIA GPUs detected." >&2; exit 1; }
+    for idx in "${available[@]}"; do append_selected_gpu "$idx"; done
+    return
+  fi
+  IFS=',' read -ra _launch_gpu_tokens <<< "$arg"
+  for idx in "${_launch_gpu_tokens[@]}"; do
+    idx="$(_compose_meta_trim "$idx")"
+    [[ -z "$idx" ]] && continue
+    gpu_exists "$idx" || { echo "[launch] ERROR: requested GPU ${idx}, but it was not detected." >&2; exit 1; }
+    append_selected_gpu "$idx"
+  done
+}
+
+summarize_selected_vram() {
+  local parts=() i gb
+  MIN_VRAM_GB=0
+  MAX_VRAM_GB=0
+  HET_VRAM_MIXED=0
+  for i in "${!CARD_INDICES[@]}"; do
+    gb="$(compose_hw_vram_gb "${CARD_MEM_MIB[$i]}")"
+    parts+=("${gb} GB")
+    if [[ "$MIN_VRAM_GB" -eq 0 || "$gb" -lt "$MIN_VRAM_GB" ]]; then MIN_VRAM_GB="$gb"; fi
+    if [[ "$gb" -gt "$MAX_VRAM_GB" ]]; then MAX_VRAM_GB="$gb"; fi
+  done
+  [[ "$MIN_VRAM_GB" != "$MAX_VRAM_GB" ]] && HET_VRAM_MIXED=1
+  local joined="" part
+  for part in "${parts[@]}"; do
+    [[ -n "$joined" ]] && joined="${joined} + "
+    joined="${joined}${part}"
+  done
+  SELECTED_VRAM_SUMMARY="$joined"
+  printf '%s' "$joined"
+}
+
+choose_gpus() {
+  GPU_LINES="$(compose_hw_detect_gpus 2>/dev/null || true)"
+  [[ -n "$GPU_LINES" ]] || { echo "[launch] ERROR: no NVIDIA GPUs detected." >&2; exit 1; }
+  local available=() idx name mem_mib sm state
+  echo "" >&2
+  echo "[launch] Detected GPUs:" >&2
+  while IFS=$'\t' read -r idx name mem_mib sm; do
+    [[ -z "$idx" ]] && continue
+    state="available"
+    if gpu_is_busy "$idx"; then
+      state="in-use (skipped)"
+    else
+      available+=("$idx")
+    fi
+    printf "  GPU %s: %s (%s GB, sm_%s) — %s\n" "$idx" "${name#NVIDIA }" "$(compose_hw_vram_gb "$mem_mib")" "${sm/./}" "$state" >&2
+  done <<< "$GPU_LINES"
+
+  if [[ -n "$GPU_ARG" ]]; then
+    select_gpus_from_arg "$GPU_ARG"
+  elif [[ -n "$CARDS" ]]; then
+    [[ "$CARDS" =~ ^[0-9]+$ && "$CARDS" -ge 1 ]] || { echo "[launch] ERROR: --cards expects a positive integer." >&2; exit 1; }
+    (( CARDS <= ${#available[@]} )) || { echo "[launch] ERROR: --cards ${CARDS} requested, but only ${#available[@]} GPU(s) are available." >&2; exit 1; }
+    local i
+    for ((i = 0; i < CARDS; i++)); do append_selected_gpu "${available[$i]}"; done
+  else
+    case "${#available[@]}" in
+      0) echo "[launch] ERROR: no available NVIDIA GPUs detected." >&2; exit 1 ;;
+      1) select_gpus_from_arg "${available[0]}" ;;
+      2)
+        local pick
+        read_or_interrupt "Use GPU ${available[0]}, GPU ${available[1]}, or both? [both]: " pick
+        pick="${pick:-both}"
+        case "$pick" in
+          both|all) select_gpus_from_arg "${available[0]},${available[1]}" ;;
+          "${available[0]}"|"${available[1]}") select_gpus_from_arg "$pick" ;;
+          *) echo "[launch] ERROR: invalid GPU choice: $pick" >&2; exit 1 ;;
+        esac
+        ;;
+      *)
+        local default_csv pick
+        default_csv="$(IFS=','; echo "${available[*]}")"
+        read_or_interrupt "Which GPU(s)? (comma-separated indices, or 'all') [all]: " pick
+        pick="${pick:-all}"
+        [[ "$pick" == "all" ]] && pick="$default_csv"
+        select_gpus_from_arg "$pick"
+        ;;
+    esac
+  fi
+  [[ "${#CARD_INDICES[@]}" -gt 0 ]] || { echo "[launch] ERROR: no GPUs selected." >&2; exit 1; }
+  SELECTED_GPU_CSV="$(IFS=','; echo "${CARD_INDICES[*]}")"
+  summarize_selected_vram >/dev/null
+  echo "[launch] selected GPU(s): ${SELECTED_GPU_CSV} (${SELECTED_VRAM_SUMMARY})" >&2
+}
+
+valid_tp_values() {
+  case "$1" in
+    qwen3.6-27b) echo "1 2 4" ;;
+    gemma-4-31b) echo "1 2 4 8 16" ;;
+    *) echo "1" ;;
   esac
+}
+
+tp_is_valid_for_model() {
+  local model="$1" tp="$2" v
+  for v in $(valid_tp_values "$model"); do [[ "$v" == "$tp" ]] && return 0; done
+  return 1
+}
+
+largest_valid_tp_for_cards() {
+  local model="$1" cards="$2" v best=1
+  for v in $(valid_tp_values "$model"); do
+    if (( v <= cards && cards % v == 0 && v > best )); then best="$v"; fi
+  done
+  echo "$best"
+}
+
+TP_VALUE=""
+PP_VALUE=""
+
+pick_parallelism() {
+  local cards="${#CARD_INDICES[@]}"
+  local tp_set=0 pp_set=0
+  [[ -n "$TP_OVERRIDE" ]] && tp_set=1
+  [[ -n "$PP_OVERRIDE" ]] && pp_set=1
+  [[ -z "$TP_OVERRIDE" || "$TP_OVERRIDE" =~ ^[0-9]+$ ]] || { echo "[launch] ERROR: --tp expects an integer." >&2; exit 1; }
+  [[ -z "$PP_OVERRIDE" || "$PP_OVERRIDE" =~ ^[0-9]+$ ]] || { echo "[launch] ERROR: --pp expects an integer." >&2; exit 1; }
+  case "$PARALLELISM" in auto|tp|pp) ;; *) echo "[launch] ERROR: --parallelism expects auto, tp, or pp." >&2; exit 1 ;; esac
+
+  if (( cards == 1 )); then
+    TP_VALUE="${TP_OVERRIDE:-1}"
+    PP_VALUE="${PP_OVERRIDE:-1}"
+  elif (( tp_set == 1 && pp_set == 1 )); then
+    TP_VALUE="$TP_OVERRIDE"; PP_VALUE="$PP_OVERRIDE"
+  elif (( tp_set == 1 )); then
+    TP_VALUE="$TP_OVERRIDE"
+    (( cards % TP_VALUE == 0 )) || { echo "[launch] ERROR: --tp ${TP_VALUE} does not divide selected GPU count ${cards}." >&2; exit 1; }
+    PP_VALUE=$(( cards / TP_VALUE ))
+  elif (( pp_set == 1 )); then
+    PP_VALUE="$PP_OVERRIDE"
+    (( cards % PP_VALUE == 0 )) || { echo "[launch] ERROR: --pp ${PP_VALUE} does not divide selected GPU count ${cards}." >&2; exit 1; }
+    TP_VALUE=$(( cards / PP_VALUE ))
+  elif [[ "$PARALLELISM" == "pp" ]]; then
+    TP_VALUE=1; PP_VALUE="$cards"
+  elif [[ "$PARALLELISM" == "tp" ]]; then
+    TP_VALUE="$cards"; PP_VALUE=1
+  elif (( HET_VRAM_MIXED == 1 )); then
+    TP_VALUE=1; PP_VALUE="$cards"
+    echo "[launch] ${cards} GPUs selected (${MIN_VRAM_GB} GB + ${MAX_VRAM_GB} GB — heterogeneous)." >&2
+    echo "[launch] Recommended: pipeline parallel PP=${PP_VALUE} to avoid bottlenecking on the smallest card." >&2
+  else
+    TP_VALUE="$(largest_valid_tp_for_cards "$MODEL_NAME" "$cards")"
+    PP_VALUE=$(( cards / TP_VALUE ))
+  fi
+
+  (( TP_VALUE * PP_VALUE == cards )) || { echo "[launch] ERROR: TP × PP must equal selected GPU count (${TP_VALUE} × ${PP_VALUE} != ${cards})." >&2; exit 1; }
+  if ! tp_is_valid_for_model "$MODEL_NAME" "$TP_VALUE"; then
+    echo "[launch] ERROR: $(model_label "$MODEL_NAME") num_kv_heads does not divide TP=${TP_VALUE}." >&2
+    echo "[launch]        Valid TP values: $(valid_tp_values "$MODEL_NAME")" >&2
+    exit 1
+  fi
+  if (( cards > 1 && PP_VALUE == 1 )); then
+    echo "[launch] Tensor parallel TP=${TP_VALUE} (PP=1)." >&2
+  elif (( PP_VALUE > 1 )); then
+    echo "[launch] Pipeline parallel PP=${PP_VALUE}, TP=${TP_VALUE}." >&2
+    echo "[launch] WARN: pipeline parallel is experimental on this stack — no benchmarks yet." >&2
+  fi
+}
+
+variant_min_gpu_count() {
+  local rel="${LAUNCH_VARIANT_COMPOSE[$1]:-}" value
+  [[ -n "$rel" && -f "${ROOT_DIR}/${rel}" ]] || { echo 1; return; }
+  value="$(compose_meta_get "${ROOT_DIR}/${rel}" requires-min-gpu-count || true)"
+  echo "${value:-1}"
+}
+
+variant_min_vram_gb() {
+  local rel="${LAUNCH_VARIANT_COMPOSE[$1]:-}" value
+  [[ -n "$rel" && -f "${ROOT_DIR}/${rel}" ]] || { echo 0; return; }
+  value="$(compose_meta_get "${ROOT_DIR}/${rel}" requires-min-vram-gb || true)"
+  echo "${value:-0}"
+}
+
+variant_engine_available() {
+  local variant="$1" engine="${LAUNCH_VARIANT_ENGINE[$variant]:-vllm}"
+  [[ -z "$ENGINE" || "$ENGINE" == "$engine" ]] || return 1
+  model_has_engine "$MODEL_NAME" "$engine"
+}
+
+variant_survives_filter() {
+  local variant="$1"
+  [[ "${LAUNCH_VARIANT_MODEL[$variant]:-}" == "$MODEL_NAME" ]] || return 1
+  variant_engine_available "$variant" || return 1
+  local min_gpu min_vram engine
+  min_gpu="$(variant_min_gpu_count "$variant")"
+  min_vram="$(variant_min_vram_gb "$variant")"
+  engine="${LAUNCH_VARIANT_ENGINE[$variant]:-vllm}"
+  [[ "$engine" == "llamacpp" && "${#CARD_INDICES[@]}" -ne 1 ]] && return 1
+  (( min_gpu <= ${#CARD_INDICES[@]} )) || return 1
+  (( min_vram == 0 || min_vram <= MIN_VRAM_GB )) || return 1
+  return 0
+}
+
+suggest_default_variant() {
+  local cards="${#CARD_INDICES[@]}"
+  if [[ "$MODEL_NAME" == "qwen3.6-27b" ]]; then
+    if [[ "$ENGINE" == "llamacpp" ]] || { ! model_has_engine "$MODEL_NAME" "vllm" && model_has_engine "$MODEL_NAME" "llamacpp"; }; then
+      echo "llamacpp/default"
+    elif (( cards >= 4 )); then
+      echo "vllm/dual4"
+    elif (( cards >= 2 )); then
+      echo "vllm/dual"
+    else
+      echo "vllm/long-text"
+    fi
+  else
+    if (( cards >= 2 )); then echo "vllm/gemma-mtp"; else echo "vllm/gemma-mtp-tp1"; fi
+  fi
+}
+
+no_fit_guidance() {
+  echo "[launch] Selected GPU budget: ${MIN_VRAM_GB} GB minimum per card." >&2
+  echo "" >&2
+  echo "No shipped model variant fits this GPU selection:" >&2
+  echo "  Qwen 3.6 27B (INT4): needs >=20 GB" >&2
+  echo "  Gemma 4 31B (INT4):  needs >=32 GB single-card or 2x24 GB" >&2
+  echo "" >&2
+  echo "Your options:" >&2
+  echo "  1) Combine with another GPU." >&2
+  echo "  2) Try llama.cpp with a smaller GGUF. See docs/SINGLE_CARD.md#sub-16gb" >&2
+  echo "  3) Re-run with --gpus to pick a different card set." >&2
+  exit 2
+}
+
+gemma_single_24gb_guidance() {
+  echo "[launch] Selected: Gemma 4 31B on GPU ${SELECTED_GPU_CSV} (${MIN_VRAM_GB} GB)." >&2
+  echo "" >&2
+  echo "Gemma 4 31B does not fit on a single ${MIN_VRAM_GB} GB card today." >&2
+  echo "Reason: vLLM's Gemma 4 single-card path needs >=32 GB; use TP=2 on 2x24 GB." >&2
+  echo "" >&2
+  echo "Your options:" >&2
+  echo "  1) Re-run with --gpus 0,1 for TP=2 if you have two 24 GB cards." >&2
+  echo "  2) Use Qwen 3.6 27B for single-card: bash scripts/launch.sh --model qwen3.6-27b" >&2
+  exit 2
+}
+
+json_field() {
+  local field="$1"
+  python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get(sys.argv[1], ""))' "$field"
+}
+
+kv_projection() {
+  local variant="$1"
+  [[ "$SKIP_PROJECTION" -eq 0 ]] || return 0
+  local mapping="${LAUNCH_VARIANT_KVCALC[$variant]:-}"
+  if [[ -z "$mapping" || "$mapping" == "SKIP" ]]; then
+    echo "[launch] KV projection only available for vLLM variants today." >&2
+    return 0
+  fi
+  if (( TP_VALUE > 4 )); then
+    echo "[launch] KV projection skipped: tools/kv-calc.py currently models TP up to 4." >&2
+    echo "[launch] Proceeding with launch-side head-divisibility validation only." >&2
+    return 0
+  fi
+
+  local kv_model="${mapping%%:*}" kv_compose="${mapping#*:}" kv_json status
+  if kv_json="$("${ROOT_DIR}/tools/kv-calc.py" --model "$kv_model" --compose "$kv_compose" --vram "$MIN_VRAM_GB" --tp "$TP_VALUE" --json 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$kv_json" != \{* ]]; then
+    echo "[launch] WARN: kv-calc failed for ${variant}: ${kv_json}" >&2
+    return 0
+  fi
+
+  local verdict weights kv_pool activation overhead drafter total budget pct
+  verdict="$(json_field verdict <<< "$kv_json")"
+  weights="$(json_field weights_gb <<< "$kv_json")"
+  kv_pool="$(json_field kv_pool_actual_gb <<< "$kv_json")"
+  activation="$(json_field activation_gb <<< "$kv_json")"
+  overhead="$(json_field cudagraph_overhead_gb <<< "$kv_json")"
+  drafter="$(json_field drafter_gb <<< "$kv_json")"
+  total="$(json_field total_gb <<< "$kv_json")"
+  budget="$(json_field budget_gb <<< "$kv_json")"
+  pct="$(json_field pct_of_vram <<< "$kv_json")"
+
+  echo "" >&2
+  echo "[launch] Suggested: ${variant} ($(model_label "$MODEL_NAME") on GPU ${SELECTED_GPU_CSV}, TP=${TP_VALUE} PP=${PP_VALUE})" >&2
+  echo "" >&2
+  echo "VRAM budget — per card (~${MIN_VRAM_GB} GB):" >&2
+  printf "  Weights/TP=%s:       %.2f GB\n" "$TP_VALUE" "$weights" >&2
+  printf "  KV pool:            %.2f GB\n" "$kv_pool" >&2
+  printf "  Activations:        %.2f GB\n" "$activation" >&2
+  printf "  Cudagraph + NCCL:   %.2f GB\n" "$overhead" >&2
+  if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) > 0.01 else 1)' "$drafter"; then
+    printf "  Drafter:            %.2f GB\n" "$drafter" >&2
+  fi
+  echo "  --------------" >&2
+  printf "  Predicted peak:     %.2f GB  %s (%.0f%% of %.2f GB engine budget)\n" "$total" "$verdict" "$pct" "$budget" >&2
+  if (( PP_VALUE > 1 )); then
+    echo "  Note: PP is not modelled in projection; real per-card weights should be lower." >&2
+  fi
+  python3 -c 'import json,sys; data=json.load(sys.stdin); [print("  Note: " + n) for n in data.get("notes", [])]' <<< "$kv_json" >&2
+  if [[ "$verdict" == "FAIL" || "$status" -ne 0 ]]; then
+    echo "" >&2
+    echo "[launch] Projection says this variant will not fit. Pick another GPU set or model." >&2
+    exit 2
+  fi
+}
+
+# --- wizard ---
+if [[ -z "$VARIANT" ]]; then
+  echo "" >&2
+  echo "club-3090 launcher — pick model, GPU set, and serving variant." >&2
+  echo "(Use --variant <name> next time to skip the wizard.)" >&2
+  choose_model
+  choose_gpus
+  pick_parallelism
+  if [[ "$MODEL_NAME" == "gemma-4-31b" && "${#CARD_INDICES[@]}" -eq 1 && "$MIN_VRAM_GB" -lt 32 ]]; then
+    gemma_single_24gb_guidance
+  fi
+
+  CANDIDATE_VARIANTS=()
+  for candidate in "${LAUNCH_VARIANT_ORDER[@]}"; do
+    if variant_survives_filter "$candidate"; then
+      CANDIDATE_VARIANTS+=("$candidate")
+    fi
+  done
+  [[ "${#CANDIDATE_VARIANTS[@]}" -gt 0 ]] || no_fit_guidance
+
+  VARIANT="$(suggest_default_variant)"
+  if [[ " ${CANDIDATE_VARIANTS[*]} " != *" ${VARIANT} "* ]]; then
+    VARIANT="${CANDIDATE_VARIANTS[0]}"
+  fi
+  echo "[launch] model: $(model_label "$MODEL_NAME")" >&2
+  echo "[launch] selected variant: ${VARIANT}" >&2
+  if (( HET_VRAM_MIXED == 1 && TP_VALUE > 1 )); then
+    echo "[launch] Note: heterogeneous TP is bottlenecked by the smallest selected card (${MIN_VRAM_GB} GB)." >&2
+  fi
+  if (( PP_VALUE > 1 )) && [[ "$VARIANT" == vllm/* ]]; then
+    echo "[launch] WARN: PP + vLLM drafter/spec-decode paths are experimental on this stack." >&2
+  fi
+  kv_projection "$VARIANT"
+
+  other_variants=()
+  for candidate in "${CANDIDATE_VARIANTS[@]}"; do
+    [[ "$candidate" == "$VARIANT" ]] && continue
+    other_variants+=("$candidate")
+  done
+  if [[ "${#other_variants[@]}" -gt 0 ]]; then
+    echo "[launch] Other variants that fit this selection: ${other_variants[*]}" >&2
+  fi
+else
+  if [[ -n "$GPU_ARG" ]]; then
+    choose_gpus
+  fi
+  if [[ -n "$TP_OVERRIDE" || -n "$PP_OVERRIDE" ]]; then
+    if [[ "${#CARD_INDICES[@]}" -eq 0 ]]; then
+      TP_VALUE="${TP_OVERRIDE:-1}"
+      PP_VALUE="${PP_OVERRIDE:-1}"
+    else
+      MODEL_NAME="${LAUNCH_VARIANT_MODEL[$VARIANT]:-qwen3.6-27b}"
+      summarize_selected_vram >/dev/null
+      pick_parallelism
+    fi
+  fi
 fi
 
 # --- launch + verify ---
 echo ""
 echo "[launch] selected variant: ${VARIANT}"
 echo ""
+if [[ -n "$SELECTED_GPU_CSV" ]]; then
+  export CUDA_VISIBLE_DEVICES="$SELECTED_GPU_CSV"
+  export NVIDIA_VISIBLE_DEVICES="$SELECTED_GPU_CSV"
+fi
+if [[ -n "$TP_VALUE" ]]; then
+  export TP="$TP_VALUE"
+fi
+if [[ -n "$PP_VALUE" ]]; then
+  export PP="$PP_VALUE"
+fi
 "$SWITCH" "$VARIANT"
 
 # Resolve the actual endpoint port + container name the same way switch.sh
@@ -352,6 +844,8 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [vllm/tools-text]=8020
   [vllm/minimal]=8020
   [vllm/dual]=8010
+  [vllm/dual4]=8015
+  [vllm/dual4-dflash]=8016
   [vllm/dual-turbo]=8011
   [vllm/dual-dflash]=8012
   [vllm/dual-dflash-noviz]=8013
@@ -361,6 +855,7 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [vllm/dual-nvlink-dflash-noviz]=8019
   [vllm/gemma-mtp]=8030
   [vllm/gemma-mtp-tp1]=8031
+  [vllm/gemma-dflash]=8032
   [llamacpp/default]=8020
   [llamacpp/concurrent]=8020
 )
@@ -373,6 +868,8 @@ declare -A LAUNCH_DEFAULT_CONTAINER=(
   [vllm/tools-text]=vllm-qwen36-27b
   [vllm/minimal]=vllm-qwen36-27b-minimal
   [vllm/dual]=vllm-qwen36-27b-dual
+  [vllm/dual4]=vllm-qwen36-27b-dual4
+  [vllm/dual4-dflash]=vllm-qwen36-27b-dual4-dflash
   [vllm/dual-turbo]=vllm-qwen36-27b-dual-turbo
   [vllm/dual-dflash]=vllm-qwen36-27b-dual-dflash
   [vllm/dual-dflash-noviz]=vllm-qwen36-27b-dual-dflash-noviz
@@ -382,6 +879,7 @@ declare -A LAUNCH_DEFAULT_CONTAINER=(
   [vllm/dual-nvlink-dflash-noviz]=vllm-qwen36-27b-dual-nvlink-dflash-noviz
   [vllm/gemma-mtp]=vllm-gemma-4-31b-mtp
   [vllm/gemma-mtp-tp1]=vllm-gemma-4-31b-mtp-tp1
+  [vllm/gemma-dflash]=vllm-gemma-4-31b-dflash
   [llamacpp/default]=llama-cpp-qwen36-27b
   [llamacpp/concurrent]=llama-cpp-qwen36-27b-concurrent
 )

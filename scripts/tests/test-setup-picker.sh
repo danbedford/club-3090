@@ -50,7 +50,7 @@ MOCK_NVIDIA_SMI
 
   cat > "${TMP_DIR}/switch-mock" <<'MOCK_SWITCH'
 #!/usr/bin/env bash
-echo "SWITCHED $*"
+echo "SWITCHED $* CUDA=${CUDA_VISIBLE_DEVICES:-} NVD=${NVIDIA_VISIBLE_DEVICES:-} TP=${TP:-} PP=${PP:-}"
 MOCK_SWITCH
   chmod +x "${TMP_DIR}/switch-mock"
 
@@ -127,14 +127,40 @@ out="$(MODEL_DIR="${TMP_DIR}/models" PREFLIGHT_DISK_GB=0 SKIP_GENESIS=1 SKIP_MOD
 assert_not_contains "$out" "Which model to download?"
 assert_contains "$out" "[model]   SKIP_MODEL=1"
 
-# The launch wizard's variant-display step marks hardware viability and defaults
-# to the single-card long-text recommendation on a single 24 GB card.
-out="$(printf '\n' | SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" --no-preflight --no-verify --engine vllm --cards 1 2>&1)"
-assert_contains "$out" "Long ctx, text only — Balanced MTP"
-assert_contains "$out" "[default]"
-assert_contains "$out" "vllm/dual"
-assert_contains "$out" "✗ needs 2× 24 GB"
-assert_contains "$out" "SWITCHED vllm/long-text"
+# The launch wizard now picks model -> GPU set -> parallelism. Scripted flags
+# skip prompts, select the expected variant, and export GPU / TP / PP envs.
+mkdir -p "${TMP_DIR}/models/qwen3.6-27b-autoround-int4" \
+         "${TMP_DIR}/models/gemma-4-31b-autoround-int4"
+
+out="$(MODEL_DIR="${TMP_DIR}/models" CLUB3090_FAKE_GPUS='0:RTX_3090:24576:8.6' \
+  SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" \
+  --no-preflight --no-verify --model qwen3.6-27b --gpus 0 --no-projection 2>&1)"
+assert_contains "$out" "[launch] selected variant: vllm/long-text"
+assert_contains "$out" "SWITCHED vllm/long-text CUDA=0 NVD=0 TP=1 PP=1"
+
+out="$(MODEL_DIR="${TMP_DIR}/models" CLUB3090_FAKE_GPUS='0:RTX_3090:24576:8.6,1:RTX_3090:24576:8.6' \
+  SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" \
+  --no-preflight --no-verify --model qwen3.6-27b --gpus 0,1 --no-projection 2>&1)"
+assert_contains "$out" "[launch] Tensor parallel TP=2"
+assert_contains "$out" "SWITCHED vllm/dual CUDA=0,1 NVD=0,1 TP=2 PP=1"
+
+if out="$(MODEL_DIR="${TMP_DIR}/models" CLUB3090_FAKE_GPUS='0:RTX_3090:24576:8.6' \
+  SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" \
+  --no-preflight --no-verify --model gemma-4-31b --gpus 0 --no-projection 2>&1)"; then
+  echo "ASSERTION FAILED: Gemma single-24GB launch unexpectedly succeeded" >&2
+  echo "$out" >&2
+  exit 1
+fi
+assert_contains "$out" "Gemma 4 31B does not fit on a single 24 GB card today"
+
+if out="$(MODEL_DIR="${TMP_DIR}/models" CLUB3090_FAKE_GPUS='0:RTX_3090:24576:8.6,1:RTX_3090:24576:8.6,2:RTX_3090:24576:8.6,3:RTX_3090:24576:8.6,4:RTX_3090:24576:8.6,5:RTX_3090:24576:8.6' \
+  SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" \
+  --no-preflight --no-verify --model qwen3.6-27b --gpus 0,1,2,3,4,5 --tp 6 --no-projection 2>&1)"; then
+  echo "ASSERTION FAILED: invalid Qwen TP=6 unexpectedly succeeded" >&2
+  echo "$out" >&2
+  exit 1
+fi
+assert_contains "$out" "Valid TP values: 1 2 4"
 
 # TTY-backed no-arg setup supports the cosmetic but real "Both" choice by
 # dispatching through the positional path for both model families.

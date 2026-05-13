@@ -97,6 +97,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-mtp
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 services:
@@ -238,7 +239,9 @@ services:
       - --dtype
       - float16
       - --tensor-parallel-size
-      - "1"
+      - "${TP:-1}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       # 48K + 0.92 — production default. Below BOTH cliffs:
       #   - GDN forward (single-prompt OOM at ~50-60K tokens) → 48K stays safely under
       #   - TurboQuant tool prefill (OOM at high mem_util + big tool responses) → 0.92 leaves ~1.9 GB headroom

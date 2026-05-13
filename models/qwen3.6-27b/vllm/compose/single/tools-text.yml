@@ -35,6 +35,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-mtp
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 services:
@@ -162,7 +163,9 @@ services:
       - --dtype
       - float16
       - --tensor-parallel-size
-      - "1"
+      - "${TP:-1}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       - --max-model-len
       - "${MAX_MODEL_LEN:-75000}"
       - --gpu-memory-utilization

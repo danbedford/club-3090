@@ -50,6 +50,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 32
+# Engine-profile: vllm-nightly-mtp
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 # Requires-sm: 9.0+
@@ -100,7 +101,9 @@ services:
       - --served-model-name
       - gemma-4-31b-autoround
       - --tensor-parallel-size
-      - "1"
+      - "${TP:-1}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       # Single-card: weights ~16 GB + drafter ~1 GB + bf16 KV at 16K + vision +
       # activations needs to fit in 24 GB. Drop vision via limit-mm-per-prompt
       # to reclaim ~1.5 GB and skip the mm-token-budget assertion.

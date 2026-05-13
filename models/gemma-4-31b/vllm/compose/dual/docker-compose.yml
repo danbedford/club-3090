@@ -50,6 +50,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-mtp
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
 services:
@@ -99,7 +100,9 @@ services:
       - --served-model-name
       - gemma-4-31b-autoround
       - --tensor-parallel-size
-      - "2"
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       - --disable-custom-all-reduce
       # max-model-len ceiling (TP=2, BF16 KV):
       #   32K ctx @ 0.92 → KV pool ~38K tokens (shipped default — matches bench above)

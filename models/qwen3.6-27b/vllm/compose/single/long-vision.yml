@@ -97,6 +97,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-mtp
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 services:
@@ -273,7 +274,9 @@ services:
       - --dtype
       - float16
       - --tensor-parallel-size
-      - "1"
+      - "${TP:-1}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       # 198K + 0.98 — restored on v0.20 + Genesis v7.65 migration. v0.20
       # closes the Cliff 1 mech B sub-cliffs that drove the 140K + 0.95
       # backoff on dev205. Verified verify-full + 33K + 50K stress all

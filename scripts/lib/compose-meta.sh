@@ -104,6 +104,27 @@ compose_hw_detect_gpus() {
     return 0
   fi
 
+  if [[ -n "${CLUB3090_FAKE_GPUS:-}" ]]; then
+    local fake parsed_fake="" f_idx f_name f_mem_mib f_sm
+    IFS=',' read -ra _compose_fake_gpus <<< "${CLUB3090_FAKE_GPUS}"
+    for fake in "${_compose_fake_gpus[@]}"; do
+      IFS=':' read -r f_idx f_name f_mem_mib f_sm <<< "$fake"
+      f_idx="$(_compose_meta_trim "${f_idx:-}")"
+      f_name="$(_compose_meta_trim "${f_name:-}")"
+      f_name="${f_name//_/ }"
+      f_mem_mib="$(_compose_meta_trim "${f_mem_mib:-}")"
+      f_sm="$(_compose_meta_trim "${f_sm:-}")"
+      [[ -z "$f_idx" || -z "$f_mem_mib" ]] && continue
+      parsed_fake+="${f_idx}"$'\t'"${f_name}"$'\t'"${f_mem_mib}"$'\t'"${f_sm}"$'\n'
+    done
+    parsed_fake="${parsed_fake%$'\n'}"
+    _COMPOSE_HW_GPU_CACHE_SET=1
+    _COMPOSE_HW_GPU_CACHE="$parsed_fake"
+    [[ -n "$parsed_fake" ]] || return 1
+    printf '%s\n' "$parsed_fake"
+    return 0
+  fi
+
   command -v nvidia-smi >/dev/null 2>&1 || return 1
 
   local query idx name mem_mib sm rest
@@ -125,6 +146,50 @@ compose_hw_detect_gpus() {
   _COMPOSE_HW_GPU_CACHE="$parsed"
   [[ -n "$parsed" ]] || return 1
   printf '%s\n' "$parsed"
+}
+
+compose_hw_in_use_gpus() {
+  # Returns GPU indices with non-trivial active compute work. Best-effort:
+  # primary path maps compute-app UUIDs back to GPU indices; memory.used is
+  # the fallback for drivers that do not expose compute app UUIDs.
+  if [[ -n "${CLUB3090_FAKE_BUSY_GPUS:-}" ]]; then
+    printf '%s\n' "${CLUB3090_FAKE_BUSY_GPUS//,/$'\n'}" | sed '/^$/d'
+    return 0
+  fi
+  if [[ -n "${CLUB3090_FAKE_GPUS:-}" ]]; then
+    return 0
+  fi
+
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+
+  local uuid_query apps line uuid idx
+  uuid_query="$(nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits 2>/dev/null || true)"
+  apps="$(nvidia-smi --query-compute-apps=gpu_uuid,pid --format=csv,noheader,nounits 2>/dev/null || true)"
+  if [[ -n "$uuid_query" && -n "$apps" ]]; then
+    while IFS=',' read -r uuid _pid; do
+      uuid="$(_compose_meta_trim "$uuid")"
+      [[ -z "$uuid" ]] && continue
+      while IFS=',' read -r idx line; do
+        idx="$(_compose_meta_trim "$idx")"
+        line="$(_compose_meta_trim "$line")"
+        if [[ "$line" == "$uuid" ]]; then
+          printf '%s\n' "$idx"
+        fi
+      done <<< "$uuid_query"
+    done <<< "$apps" | sort -u
+    return 0
+  fi
+
+  local mem_used_lines used
+  mem_used_lines="$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null || true)"
+  while IFS=',' read -r idx used; do
+    idx="$(_compose_meta_trim "$idx")"
+    used="$(_compose_meta_trim "$used")"
+    [[ -z "$idx" || -z "$used" ]] && continue
+    if [[ "$used" =~ ^[0-9]+$ ]] && (( used > 1024 )); then
+      printf '%s\n' "$idx"
+    fi
+  done <<< "$mem_used_lines"
 }
 
 compose_hw_summary() {

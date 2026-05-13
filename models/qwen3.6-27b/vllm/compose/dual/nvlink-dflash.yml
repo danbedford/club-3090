@@ -73,6 +73,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-dflash
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
 services:
@@ -152,7 +153,9 @@ services:
       - --dtype
       - bfloat16
       - --tensor-parallel-size
-      - "2"
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       # Custom all-reduce ENABLED (no --disable-custom-all-reduce) — NVLink
       # makes vLLM's custom kernel a win. dual-dflash.yml disables it because
       # PCIe P2P bandwidth makes the NCCL fallback faster there.

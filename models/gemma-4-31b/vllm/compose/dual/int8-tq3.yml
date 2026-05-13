@@ -179,6 +179,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-full
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
 # Requires-sm: 9.0+
@@ -268,7 +269,9 @@ services:
       - --served-model-name
       - gemma-4-31b-autoround
       - --tensor-parallel-size
-      - "2"
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       - --disable-custom-all-reduce
       # ---- 2026-05-11 workaround flags ----
       # Force TURBOQUANT backend — required because vLLM has no per-layer

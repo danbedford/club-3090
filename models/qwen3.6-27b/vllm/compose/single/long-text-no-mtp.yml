@@ -111,6 +111,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-mtp
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 services:
@@ -336,7 +337,9 @@ services:
       - --dtype
       - float16
       - --tensor-parallel-size
-      - "1"
+      - "${TP:-1}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
       # 180K + 0.97 — backed off from 214K + 0.985 on 2026-05-01 PM after
       # verify-stress probe 1 (10K-token long-context needle) crashed with
       # GDN forward OOM (`fla.ops.chunk.chunk_gated_delta_rule_fwd_h`

@@ -9,6 +9,7 @@
 #   Max ctx:   262K (full model native — no Cliff 1 / Cliff 2)
 #   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
 #   Status:    ✅ Production
+#   Engine-profile: llama-cpp-mainline
 #   Best for:  Bulletproof single-card path — slow decode (~21 TPS) but
 #              cliff-immune; recommended fallback when vLLM hits OOM at long ctx
 # ---------------------------------------------------------------------------
