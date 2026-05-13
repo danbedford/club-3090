@@ -16,6 +16,22 @@ history; SemVer takes over from `v0.3.0` onward.
 
 ---
 
+## v0.5.1 — 2026-05-13
+
+
+### 🐛 Bug fixes
+
+- fix(qwen): PR #35936 overlay — sidecar pattern to resolve Genesis RO-mount conflict ([6617e1e](https://github.com/noonghunna/club-3090/commit/6617e1e090a6f52708aaf83821a92b612c4ad869))
+
+
+### 📝 Documentation
+
+- docs: clarify MODEL_DIR — second drive / HF cache / Windows-WSL ([1678ca0](https://github.com/noonghunna/club-3090/commit/1678ca0c8ba43ea09fad9073639a48337f2ff163))
+- docs(upstream): correct stale vllm#40807 row + add #40798/#42215 row ([14ffe45](https://github.com/noonghunna/club-3090/commit/14ffe45667fb0aa292839be05ae3ad0d139d3a04))
+
+
+
+[Pin: `git checkout v0.5.1`] · [Full diff](https://github.com/noonghunna/club-3090/compare/v0.5.0...v0.5.1)
 ## v0.5.0 — 2026-05-12
 
 
