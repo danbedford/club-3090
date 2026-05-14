@@ -16,6 +16,31 @@ history; SemVer takes over from `v0.3.0` onward.
 
 ---
 
+## v0.6.3 — 2026-05-14
+
+
+### ✨ Features
+
+- feat: unify dual-card composes with NVLink auto-detection ([e00626a](https://github.com/noonghunna/club-3090/commit/e00626a50e92fe44855c410b86ae3f33ace82f29))
+
+
+### 🐛 Bug fixes
+
+- fix(scripts): report.sh shows human-readable version via git describe ([0f0a9c8](https://github.com/noonghunna/club-3090/commit/0f0a9c84c513392d889dbf51d05c5edb1f4ba649))
+
+
+### 📝 Documentation
+
+- docs: cross-rig data — eddie 3090/3090Ti power-cap + alanspires 6×3090 VFIO ([e41323f](https://github.com/noonghunna/club-3090/commit/e41323ffa9c471c6f4d9b771bbb94ff784235342))
+
+
+### 🧹 Other
+
+- Merge PR #128: unify dual-card composes with NVLink auto-detection ([#128](https://github.com/noonghunna/club-3090/pull/128) by @noonghunna)
+
+
+
+[Pin: `git checkout v0.6.3`] · [Full diff](https://github.com/noonghunna/club-3090/compare/v0.6.2...v0.6.3)
 ## v0.6.2 — 2026-05-14
 
 
