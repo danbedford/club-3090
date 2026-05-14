@@ -74,12 +74,15 @@ bash scripts/setup.sh
 #    Or scripted:
 #      bash scripts/setup.sh qwen3.6-27b
 
-# 3. Pick a config + boot it (interactive hardware-aware wizard — asks cards / workload)
+# 3. Pick a config + boot it (interactive wizard: asks model → GPUs → projects VRAM budget)
 bash scripts/launch.sh
 #    Or skip the wizard:
 #      bash scripts/launch.sh --variant vllm/default      # single-card chat (recommended)
 #      bash scripts/launch.sh --variant vllm/dual         # dual-card 262K + vision
 #      bash scripts/launch.sh --variant llamacpp/default  # single-card 262K, no cliffs
+#    Or partial flags (wizard fills the rest):
+#      bash scripts/launch.sh --model qwen3.6-27b --gpus 0,1
+#      bash scripts/launch.sh --tp 2 --pp 1               # override vLLM parallelism
 #    See all variants:
 #      bash scripts/switch.sh --list
 
@@ -154,7 +157,7 @@ club-3090/
 │           └── README.md                  blocked status — what would unblock it on this model
 ├── scripts/                               shared, model-aware
 │   ├── setup.sh                           bash setup.sh <model> → preflight + downloads + verifies + Genesis
-│   ├── launch.sh                          interactive wizard: cards → workload → boots compose + verifies
+│   ├── launch.sh                          interactive wizard: model → GPUs → KV projection → boots compose + verifies
 │   ├── switch.sh                          stateless variant switcher (bring down old, up new)
 │   ├── update.sh                          one-shot upgrade: git pull + re-pin Genesis + re-vendor patches
 │   ├── health.sh                          runtime health probe (KV %, MTP AL, recent TPS, errors)

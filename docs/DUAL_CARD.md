@@ -163,7 +163,7 @@ If you're solo-using on dual, you're paying for hardware that mostly sits idle o
 bash scripts/setup.sh qwen3.6-27b
 git clone https://github.com/vllm-project/vllm.git /opt/ai/engines/vllm/primary    # required for dual variants
 
-# 2. Pick + boot via wizard (asks GPU count + workload)
+# 2. Pick + boot via wizard (asks model + GPUs, projects VRAM budget, auto-picks TP=2 for matched 2× 3090)
 bash scripts/launch.sh
 
 # 3. Or skip the wizard:

@@ -204,7 +204,7 @@ Generally prefer **dropping `MAX_MODEL_LEN` first** (clean KV budget reduction, 
 # 1. Setup (downloads model, clones Genesis, ~20 min cold)
 bash scripts/setup.sh qwen3.6-27b
 
-# 2. Pick + boot via wizard (asks engine + workload)
+# 2. Pick + boot via wizard (asks model + GPUs, projects VRAM budget)
 bash scripts/launch.sh
 
 # 3. Or skip the wizard:

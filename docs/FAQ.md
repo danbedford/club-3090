@@ -134,7 +134,7 @@ If your numbers on the same compose look different from ours by >15%, the most l
 
 For a first install, run `bash scripts/setup.sh` with no model argument in a normal terminal. It opens a hardware-aware model picker, marks Qwen / Gemma / Both as eligible or not for your detected GPUs, then continues into the existing download flow.
 
-After setup, run `bash scripts/launch.sh`. Its existing cards + workload wizard now marks compose variants with hardware fit and picks the recommended default for the rig (`vllm/long-text` on one 24 GB card, `vllm/dual` on matched 2× 3090). Power-user forms still work: `bash scripts/setup.sh qwen3.6-27b`, `bash scripts/launch.sh --variant vllm/dual`, plus `setup.sh --help` / `launch.sh --help`.
+After setup, run `bash scripts/launch.sh`. The wizard asks which model (filtered to what you've downloaded), then which GPU(s) to use, auto-picks TP for homogeneous sets (PP for heterogeneous), filters variants by hardware fit, shows a per-card VRAM projection from `tools/kv-calc.py` for the suggested default, then boots and runs `verify-full.sh`. Power-user forms still work: `bash scripts/setup.sh qwen3.6-27b`, `bash scripts/launch.sh --variant vllm/dual`, partial flags like `bash scripts/launch.sh --model qwen3.6-27b --gpus 0,1` (skips prompts), `--tp 4 --pp 2` to override parallelism, plus `setup.sh --help` / `launch.sh --help` for the full flag list.
 
 ### `bash scripts/setup.sh qwen3.6-27b` is downloading 20+ GB. Where does it go? / Can I put models on a different drive?
 
@@ -177,7 +177,7 @@ If your *Genesis tree* (not the repo) is out of sync — the pin in `setup.sh` m
 
 ### My GPU isn't card 0 — how do I change it?
 
-`CUDA_VISIBLE_DEVICES=2 bash scripts/launch.sh --variant vllm/default` (substitute your card index). For dual-card, pass two: `CUDA_VISIBLE_DEVICES=2,3`. The compose files inherit env from your shell.
+Use the `--gpus` flag: `bash scripts/launch.sh --gpus 2` (single-card) or `bash scripts/launch.sh --gpus 2,3` (two cards). The wizard exports `CUDA_VISIBLE_DEVICES` for you. The older form `CUDA_VISIBLE_DEVICES=2 bash scripts/launch.sh --variant vllm/default` still works if you prefer to set the env yourself.
 
 ### Container fails to start: "Free memory ... is less than desired GPU memory utilization"
 
