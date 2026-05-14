@@ -69,6 +69,22 @@ for f in "$REPO"/models/*/*/compose/*/*.yml "$REPO"/models/*/*/compose/*.yml; do
   if [ -z "$image" ]; then
     continue  # No image: line, skip (might be an override-only compose)
   fi
+  if [[ "$image" == *'VLLM_NIGHTLY_SHA'* ]]; then
+    engine_profile=$(grep -E "^[[:space:]]*#[[:space:]]*Engine-profile:[[:space:]]*" "$f" 2>/dev/null \
+      | head -1 \
+      | sed -E 's/^[[:space:]]*#[[:space:]]*Engine-profile:[[:space:]]*//' \
+      | awk '{print $1}' || true)
+    engine_file="$REPO/scripts/lib/profiles/engines/${engine_profile}.yml"
+    if [ -n "$engine_profile" ] && [ -f "$engine_file" ]; then
+      resolved_spec=$(grep -E "^[[:space:]]*spec:[[:space:]]+" "$engine_file" 2>/dev/null \
+        | head -1 \
+        | sed -E 's/^[[:space:]]*spec:[[:space:]]+//' \
+        | tr -d '"' | awk '{print $1}' || true)
+      if [ -n "$resolved_spec" ]; then
+        image="${resolved_spec}#${engine_profile}"
+      fi
+    fi
+  fi
   # Apply filter if set
   if [ -n "$FILTER" ] && [[ "$image" != *"$FILTER"* ]]; then
     continue
@@ -96,7 +112,7 @@ awk -F'\t' '{print $1}' "$tmp" | sort | uniq -c | sort -rn \
 echo ""
 echo "${CYAN}── Pin-drift detection ──${NC}"
 drift=$(awk -F'\t' '{print $1}' "$tmp" | awk -F: '{print $1}' | sort -u | while read repo; do
-  ntags=$(awk -F'\t' -v r="$repo" '$1 ~ "^"r":" {print $1}' "$tmp" | sort -u | wc -l)
+  ntags=$(awk -F'\t' -v r="$repo" '$1 ~ "^"r":" {split($1, a, "#"); print a[1]}' "$tmp" | sort -u | wc -l)
   if [ "$ntags" -gt 1 ]; then
     printf "  ${YELLOW}%s${NC} has %d distinct tags pinned\n" "$repo" "$ntags"
   fi
