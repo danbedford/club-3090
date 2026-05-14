@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 HELPER="${ROOT_DIR}/scripts/lib/profiles/launch_compat.py"
 GPU_3090='0|RTX_3090|24576|8.6'
+MTP_SHA="1acd67a795ebccdf9b9db7697ae9082058301657"
+DFLASH_SHA="e47c98ef7a38792996e452ef53914e21e41928e9"
 
 assert_contains() {
   local haystack="$1"
@@ -71,5 +73,42 @@ out="$(python3 "$HELPER" validate-variant \
 assert_contains "$out" "Pass 1 fits()"
 assert_contains "$out" "Resolved compose: vllm/long-text"
 assert_contains "$out" "Pass 2 fits()"
+
+out="$(python3 "$HELPER" resolve-engine-pin --engine-id vllm-nightly-mtp --format shell)"
+assert_contains "$out" "VLLM_NIGHTLY_SHA=${MTP_SHA}"
+
+if out="$(python3 "$HELPER" resolve-engine-pin --engine-id vllm-stable --format shell 2>&1)"; then
+  echo "ASSERTION FAILED: pip-only vllm-stable unexpectedly resolved as a docker nightly" >&2
+  echo "$out" >&2
+  exit 1
+fi
+assert_contains "$out" "install.spec is not a docker nightly image"
+
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell)"
+assert_contains "$out" "VLLM_NIGHTLY_SHA=${MTP_SHA}"
+
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/gemma-dflash --format shell)"
+assert_contains "$out" "VLLM_NIGHTLY_SHA=${DFLASH_SHA}"
+
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  out="$(VLLM_NIGHTLY_SHA="$MTP_SHA" docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/docker-compose.yml" config 2>/dev/null)"
+  assert_contains "$out" "image: vllm/vllm-openai:nightly-${MTP_SHA}"
+
+  out="$(VLLM_NIGHTLY_SHA="$MTP_SHA" VLLM_IMAGE=ghcr.io/noonghunna/vllm-club3090:latest docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/docker-compose.yml" config 2>/dev/null)"
+  assert_contains "$out" "image: ghcr.io/noonghunna/vllm-club3090:latest"
+fi
+
+out="$(python3 - <<'PY'
+from scripts.lib.profiles.compat import InstanceSpec
+from scripts.lib.profiles.estate_cli import compose_env
+
+mtp = compose_env(InstanceSpec(name="qwen", compose_name="vllm/dual", gpu_indices=(0, 1), port=8010))
+dflash = compose_env(InstanceSpec(name="gemma", compose_name="vllm/gemma-dflash", gpu_indices=(0, 1), port=8032))
+print(mtp["VLLM_NIGHTLY_SHA"])
+print(dflash["VLLM_NIGHTLY_SHA"])
+PY
+)"
+assert_contains "$out" "$MTP_SHA"
+assert_contains "$out" "$DFLASH_SHA"
 
 echo "test-launch-compat: ok"

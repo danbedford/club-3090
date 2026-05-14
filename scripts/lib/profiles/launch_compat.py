@@ -19,7 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 
 os.environ.setdefault("CLUB3090_LOG_LEVEL", "ERROR")
 
-from scripts.lib.profiles.compat import FitsResult, fits, load_profiles, to_compose_name  # noqa: E402
+from scripts.lib.profiles.compat import FitsResult, ProfileError, fits, load_profiles, to_compose_name  # noqa: E402
 from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY  # noqa: E402
 
 
@@ -115,6 +115,44 @@ def _entry_objects(entry: dict, profiles):
         profiles.engines[entry["engine"]],
         drafter,
     )
+
+
+def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
+    """Resolve EngineProfile.install into compose environment exports."""
+    try:
+        engine = profiles.engines[engine_id]
+    except KeyError as exc:
+        raise ProfileError(f"unknown engine profile `{engine_id}`") from exc
+
+    spec = str(engine.install.get("spec", ""))
+    if engine.install.get("method") != "docker_image" or engine.type != "vllm":
+        raise ProfileError(f"engine {engine_id!r} install.spec is not a docker nightly image: {spec!r}")
+    if ":nightly-" not in spec:
+        raise ProfileError(f"engine {engine_id!r} install.spec is not a docker nightly image: {spec!r}")
+
+    sha = spec.rsplit(":nightly-", 1)[1].strip()
+    if not sha or any(char.isspace() for char in sha):
+        raise ProfileError(f"engine {engine_id!r} has an invalid nightly SHA in install.spec: {spec!r}")
+    return {"VLLM_NIGHTLY_SHA": sha}
+
+
+def resolve_variant_pin(profiles, variant: str) -> dict[str, str]:
+    entry = COMPOSE_REGISTRY.get(variant)
+    if not entry:
+        raise ProfileError(f"unknown compose variant `{variant}`")
+    return resolve_engine_pin(profiles, entry["engine"])
+
+
+def _print_env(exports: dict[str, str], fmt: str) -> None:
+    if fmt == "value":
+        print(exports["VLLM_NIGHTLY_SHA"])
+    elif fmt == "json":
+        import json
+
+        print(json.dumps(exports, sort_keys=True))
+    else:
+        for key, value in exports.items():
+            print(f"{key}={value}")
 
 
 def _run_fits_for_entry(
@@ -312,6 +350,20 @@ def command_validate_variant(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_resolve_engine_pin(args: argparse.Namespace) -> int:
+    _quiet_compat_logger()
+    profiles = load_profiles()
+    _print_env(resolve_engine_pin(profiles, args.engine_id), args.format)
+    return 0
+
+
+def command_resolve_variant_pin(args: argparse.Namespace) -> int:
+    _quiet_compat_logger()
+    profiles = load_profiles()
+    _print_env(resolve_variant_pin(profiles, args.variant), args.format)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Profile bridge for scripts/launch.sh")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -342,6 +394,16 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--verbose", action="store_true")
     validate.set_defaults(func=command_validate_variant)
 
+    engine_pin = sub.add_parser("resolve-engine-pin")
+    engine_pin.add_argument("--engine-id", required=True)
+    engine_pin.add_argument("--format", choices=("shell", "json", "value"), default="shell")
+    engine_pin.set_defaults(func=command_resolve_engine_pin)
+
+    variant_pin = sub.add_parser("resolve-variant-pin")
+    variant_pin.add_argument("--variant", required=True)
+    variant_pin.add_argument("--format", choices=("shell", "json", "value"), default="shell")
+    variant_pin.set_defaults(func=command_resolve_variant_pin)
+
     return parser
 
 
@@ -350,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except LaunchCompatError as exc:
+    except (LaunchCompatError, ProfileError) as exc:
         print(f"[launch] ERROR: {exc}", file=sys.stderr)
         return 2
 

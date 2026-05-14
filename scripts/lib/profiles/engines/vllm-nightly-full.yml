@@ -5,7 +5,7 @@ type: vllm
 stability: experimental
 install:
   method: docker_image
-  spec: ghcr.io/noonghunna/vllm-club3090:nightly-stable
+  spec: vllm/vllm-openai:nightly-e47c98ef7a38792996e452ef53914e21e41928e9
 min_sm: 7.5
 supported_model_families:
   - dense
@@ -63,5 +63,4 @@ vendored_overlays:
     purpose: "Respect configured Qwen3 Coder tool parser for required tool choice."
 required_genesis: true
 genesis_pin: v7.72.2
-notes: "Full experimental overlay surface for Gemma INT8 PTH and Qwen tool-parser experiments."
-
+notes: "Full experimental overlay surface for Gemma INT8 PTH and Qwen tool-parser experiments. Launch exports this SHA as VLLM_NIGHTLY_SHA; VLLM_IMAGE can override the full image ref."

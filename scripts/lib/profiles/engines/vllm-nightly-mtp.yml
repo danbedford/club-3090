@@ -5,7 +5,7 @@ type: vllm
 stability: nightly
 install:
   method: docker_image
-  spec: ghcr.io/noonghunna/vllm-club3090:latest
+  spec: vllm/vllm-openai:nightly-1acd67a795ebccdf9b9db7697ae9082058301657
 min_sm: 7.5
 supported_model_families:
   - dense
@@ -40,5 +40,4 @@ required_overlays: []
 vendored_overlays: []
 required_genesis: true
 genesis_pin: v7.72.2
-notes: "Production nightly path for Qwen MTP and Gemma MTP without DFlash or INT8 PTH overlays."
-
+notes: "Production nightly path for Qwen MTP and Gemma MTP without DFlash or INT8 PTH overlays. Launch exports this SHA as VLLM_NIGHTLY_SHA; VLLM_IMAGE can override the full image ref."
