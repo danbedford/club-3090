@@ -140,23 +140,34 @@ def parse_vllm_boot(boot_log: str) -> dict:
 def parse_bench(log: str) -> dict:
     """Extract narrative + code TPS summaries from bench.sh output."""
     out: dict[str, Any] = {}
-    # narrative summary block
-    for kind in ("narrative", "code"):
-        m = re.search(
+    for kind in ("narrative", "code", "prompt-processing"):
+        block = re.search(
             rf"=== summary \[{kind}\] \(n=\d+\) ===\s*\n"
-            rf"\s+wall_TPS\s+mean=\s*([\d.]+)\s+std=\s*([\d.]+)\s+CV=\s*([\d.]+)%.*\n"
-            rf"\s+decode_TPS\s+mean=\s*([\d.]+)\s+std=\s*([\d.]+)\s+CV=\s*([\d.]+)%.*\n"
-            rf"\s+TTFT\s+mean=\s*([\d.]+)ms",
+            rf"(?P<body>.*?)(?=\n==========|\n=== GPU state ===|\n=== Last|\Z)",
             log,
+            re.DOTALL,
         )
+        if not block:
+            continue
+        body = block.group("body")
+        parsed: dict[str, Any] = {}
+        m = re.search(r"\s+wall_TPS\s+mean=\s*([\d.]+)\s+std=\s*([\d.]+)\s+CV=\s*([\d.]+)%", body)
         if m:
-            out[kind] = {
-                "wall_tps_mean": float(m.group(1)),
-                "wall_tps_cv": float(m.group(3)),
-                "decode_tps_mean": float(m.group(4)),
-                "decode_tps_cv": float(m.group(6)),
-                "ttft_ms_mean": float(m.group(7)),
-            }
+            parsed["wall_tps_mean"] = float(m.group(1))
+            parsed["wall_tps_cv"] = float(m.group(3))
+        m = re.search(r"\s+decode_TPS\s+mean=\s*([\d.]+)\s+std=\s*([\d.]+)\s+CV=\s*([\d.]+)%", body)
+        if m:
+            parsed["decode_tps_mean"] = float(m.group(1))
+            parsed["decode_tps_cv"] = float(m.group(3))
+        m = re.search(r"\s+TTFT\s+mean=\s*([\d.]+)ms", body)
+        if m:
+            parsed["ttft_ms_mean"] = float(m.group(1))
+        m = re.search(r"\s+PP tok/s\s+mean=\s*([\d.]+)\s+std=\s*([\d.]+)\s+CV=\s*([\d.]+)%", body)
+        if m:
+            parsed["pp_tps_mean"] = float(m.group(1))
+            parsed["pp_tps_cv"] = float(m.group(3))
+        if parsed:
+            out[kind.replace("-", "_")] = parsed
     # GPU state at end
     gpu_block = re.search(r"=== GPU state ===\s*\n((?:\d.+\n){1,4})", log)
     if gpu_block:
@@ -396,15 +407,22 @@ def render(report: dict) -> str:
     lines.append("## Performance — `bench.sh`")
     lines.append("")
     if bench.get("narrative") or bench.get("code"):
-        lines.append("| Bench | wall TPS | decode TPS | TTFT | CV (wall/decode) |")
-        lines.append("|---|---:|---:|---:|---:|")
+        lines.append("| Bench | wall TPS | decode TPS | PP tok/s | TTFT | CV (wall/decode) |")
+        lines.append("|---|---:|---:|---:|---:|---:|")
         for kind in ("narrative", "code"):
             b = bench.get(kind)
             if b:
+                pp = f"{b['pp_tps_mean']:.0f}" if b.get("pp_tps_mean") is not None else "n/a"
                 lines.append(
-                    f"| {kind} | {b['wall_tps_mean']:.2f} | **{b['decode_tps_mean']:.2f}** | "
+                    f"| {kind} | {b['wall_tps_mean']:.2f} | **{b['decode_tps_mean']:.2f}** | {pp} | "
                     f"{b['ttft_ms_mean']:.0f} ms | {b['wall_tps_cv']:.1f}% / {b['decode_tps_cv']:.1f}% |"
                 )
+        pp_fallback = bench.get("prompt_processing")
+        if pp_fallback and pp_fallback.get("pp_tps_mean") is not None:
+            lines.append(
+                f"| prompt-processing fallback | — | — | **{pp_fallback['pp_tps_mean']:.0f}** | "
+                f"{pp_fallback.get('ttft_ms_mean', 0):.0f} ms | — |"
+            )
         if bench.get("mtp"):
             m = bench["mtp"]
             lines.append("")
@@ -600,9 +618,14 @@ def render_discuss(report: dict) -> str:
     if bench.get("narrative"):
         b_n, b_c = bench["narrative"], bench.get("code", {})
         lines.append("**TPS:**")
-        lines.append(f"- Narrative: {b_n['decode_tps_mean']:.1f} TPS decode, {b_n['ttft_ms_mean']:.0f} ms TTFT (CV {b_n['decode_tps_cv']:.1f}%)")
+        pp_n = f", PP {b_n['pp_tps_mean']:.0f} tok/s" if b_n.get("pp_tps_mean") is not None else ""
+        lines.append(f"- Narrative: {b_n['decode_tps_mean']:.1f} TPS decode, {b_n['ttft_ms_mean']:.0f} ms TTFT{pp_n} (CV {b_n['decode_tps_cv']:.1f}%)")
         if b_c:
-            lines.append(f"- Code: {b_c['decode_tps_mean']:.1f} TPS decode, {b_c['ttft_ms_mean']:.0f} ms TTFT (CV {b_c['decode_tps_cv']:.1f}%)")
+            pp_c = f", PP {b_c['pp_tps_mean']:.0f} tok/s" if b_c.get("pp_tps_mean") is not None else ""
+            lines.append(f"- Code: {b_c['decode_tps_mean']:.1f} TPS decode, {b_c['ttft_ms_mean']:.0f} ms TTFT{pp_c} (CV {b_c['decode_tps_cv']:.1f}%)")
+        if bench.get("prompt_processing", {}).get("pp_tps_mean") is not None:
+            pp = bench["prompt_processing"]["pp_tps_mean"]
+            lines.append(f"- Prompt-processing fallback: {pp:.0f} tok/s")
         lines.append("")
     boot = report.get("vllm_boot", {})
     if boot.get("kv_cache_tokens"):
@@ -641,11 +664,21 @@ def compute_tldr(report: dict) -> list[str]:
     bullets = []
     bench = report.get("bench", {})
     if bench.get("narrative") and bench.get("code"):
+        pp_vals = [
+            b.get("pp_tps_mean")
+            for b in (bench.get("narrative", {}), bench.get("code", {}))
+            if b.get("pp_tps_mean") is not None
+        ]
+        pp_text = f", PP {sum(pp_vals) / len(pp_vals):.0f} tok/s" if pp_vals else ""
         bullets.append(
             f"TPS narrative **{bench['narrative']['decode_tps_mean']:.1f}** / "
             f"code **{bench['code']['decode_tps_mean']:.1f}** "
-            f"(TTFT {bench['narrative']['ttft_ms_mean']:.0f}/{bench['code']['ttft_ms_mean']:.0f} ms)."
+            f"(TTFT {bench['narrative']['ttft_ms_mean']:.0f}/{bench['code']['ttft_ms_mean']:.0f} ms{pp_text})."
         )
+    elif bench.get("prompt_processing"):
+        pp = bench["prompt_processing"].get("pp_tps_mean")
+        if pp is not None:
+            bullets.append(f"Prompt processing fallback: **{pp:.0f} tok/s**.")
     boot = report.get("vllm_boot", {})
     if boot.get("kv_cache_tokens") and boot.get("max_concurrency"):
         bullets.append(

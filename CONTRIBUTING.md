@@ -93,7 +93,7 @@ For contributors who know the `BENCHMARKS.md` section structure and want to prop
    ```bash
    bash scripts/bench.sh
    ```
-   Drop the run-by-run output in the PR — `wall_TPS`, `decode_TPS`, `TTFT`, MTP `AL` (where applicable). Mean + CV + n=5 minimum.
+   Drop the run-by-run output in the PR — `wall_TPS`, `decode_TPS`, `PP tok/s`, `TTFT`, MTP `AL` (where applicable). Mean + CV + n=5 minimum.
 5. **Open the PR with a description that answers four questions:**
    - What problem does this solve? (One paragraph.)
    - What's the measured impact? (Numbers.)
@@ -127,7 +127,7 @@ Or run the steps individually if you'd rather:
      CONTAINER=<container-name> ENDPOINT=<http://localhost:port> \
      bash scripts/soak-test.sh
    ```
-5. **`bench.sh` run** — 3 warmups + 5 measured runs of narrative + code prompts. Report `wall_TPS`, `decode_TPS`, `TTFT`, peak VRAM/card per run, MTP/DFlash AL where applicable.
+5. **`bench.sh` run** — 3 warmups + 5 measured runs of narrative + code prompts. Report `wall_TPS`, `decode_TPS`, `PP tok/s`, `TTFT`, peak VRAM/card per run, MTP/DFlash AL where applicable. For llama.cpp or other engines without vLLM prompt-throughput logs, include `PP=1 bash scripts/bench.sh` so the long-prompt fallback captures prompt-processing throughput.
 6. **BENCHMARKS row** — under the appropriate model section, mirroring existing column shape (incl. `Rig` column). Attribution is automatic.
 7. **CHANGELOG entry** — in `models/<model>/CHANGELOG.md`.
 

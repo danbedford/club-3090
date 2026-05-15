@@ -50,11 +50,17 @@ for dir in "${fixtures[@]}"; do
   }
   assert_contains "$row" "Report: \`results/rebench/${dir##*/}/REPORT.md\`"
   if [[ "$section" == "Gemma 4 31B (community-experimental)" ]]; then
-    assert_columns "$row" 10
+    assert_columns "$row" 11
   else
-    assert_columns "$row" 8
+    assert_columns "$row" 9
   fi
 done
+
+out="$(BENCH_MOCK=1 RUNS=1 WARMUPS=0 bash scripts/bench.sh)"
+assert_contains "$out" "PP tok/s"
+out="$(BENCH_MOCK=1 PP=1 RUNS=1 WARMUPS=0 bash scripts/bench.sh)"
+assert_contains "$out" "summary [prompt-processing]"
+assert_contains "$out" "PP tok/s"
 
 tag="qwen-int8-pth-n4-2026-05-10"
 rm -f "results/rebench/${tag}/BENCHMARKS-row.md" \

@@ -266,6 +266,26 @@ def peak_vram(internal: dict[str, Any], gpu_count: int) -> str:
     return f"{max(vals) / 1024:.1f} GB{suffix}"
 
 
+def pp_display(bench: dict[str, Any]) -> str:
+    vals: list[float] = []
+    for kind in ("narrative", "code"):
+        try:
+            val = bench.get(kind, {}).get("pp_tps_mean")
+            if val is not None:
+                vals.append(float(val))
+        except Exception:
+            pass
+    if vals:
+        return f"{sum(vals) / len(vals):.0f}"
+    try:
+        val = bench.get("prompt_processing", {}).get("pp_tps_mean")
+        if val is not None:
+            return f"{float(val):.0f}"
+    except Exception:
+        pass
+    return "—"
+
+
 def parse_jsonish(value: str) -> dict[str, Any]:
     try:
         parsed = json.loads(value)
@@ -370,6 +390,7 @@ def format_row(data: dict[str, Any]) -> str:
     kv = kv_display(c["kv"], c["served"])
     max_ctx = fmt_ctx(c["max_ctx"])
     tps = f"**{fmt_tps(narrative.get('wall_tps_mean'))} / {fmt_tps(code.get('wall_tps_mean'))}**"
+    pp = pp_display(bench)
     peak = peak_vram(internal, gpu_count)
     spec_n = c["spec"].get("num_speculative_tokens")
     notes = [soak_note(soak), f"verify-stress {verify}"]
@@ -393,12 +414,12 @@ def format_row(data: dict[str, Any]) -> str:
         per_pos = str(mtp.get("per_position") or "—")
         return (
             f"| `{compose}` | {rig_cell(rig)} | {kv} | {max_ctx} | {tps} | "
-            f"{al} | {per_pos} | {peak} | {data['date']} | {note_cell} |"
+            f"{pp} | {al} | {per_pos} | {peak} | {data['date']} | {note_cell} |"
         )
 
     return (
         f"| `{compose}` | {rig_cell(rig)} | {kv} | {max_ctx} | {tps} | "
-        f"{peak} | {data['date']} | {note_cell} |"
+        f"{pp} | {peak} | {data['date']} | {note_cell} |"
     )
 
 
