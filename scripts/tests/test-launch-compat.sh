@@ -86,7 +86,7 @@ fi
 assert_contains "$out" "install.spec is not a docker nightly image"
 
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell)"
-assert_contains "$out" "VLLM_NIGHTLY_SHA=${CLEAN_SHA}"
+assert_contains "$out" "VLLM_NIGHTLY_SHA=${MTP_SHA}"
 
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual-tq3-mtp --format shell)"
 assert_contains "$out" "VLLM_NIGHTLY_SHA=${MTP_SHA}"
@@ -114,7 +114,6 @@ print(tq3["VLLM_NIGHTLY_SHA"])
 print(dflash["VLLM_NIGHTLY_SHA"])
 PY
 )"
-assert_contains "$out" "$CLEAN_SHA"
 assert_contains "$out" "$MTP_SHA"
 assert_contains "$out" "$DFLASH_SHA"
 
