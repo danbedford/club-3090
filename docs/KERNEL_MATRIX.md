@@ -5,6 +5,14 @@
 
 This matrix helps decide which inference engine + kernel combination to route composes to.
 
+## Kernel Selection Philosophy
+
+**Engines choose kernels for models** — not the other way around.
+
+- The model architecture defines the mathematical requirements.
+- The inference engine selects the best available kernel implementation based on hardware, features enabled (MTP, DFlash, TQ3, etc.), and compatibility.
+- You control this via engine flags (`--attention-backend flashinfer`, engine-specific configs, etc.).
+
 ## Core Modern Kernels
 
 | Kernel / Backend              | Primary Purpose                        | Best Hardware              | Key Strengths                              | Maturity on Ampere (3090) |
