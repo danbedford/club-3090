@@ -89,6 +89,15 @@ _CONTAINER_PORT = 8000
 _DEFAULT_READY_TIMEOUT_S = 600  # generous; a fixture runner returns instantly
 
 
+# F3/G6-A-ii: a bounded tail of the CONTAINER log captured on boot failure.
+# `docker compose logs --no-color --tail=N`. Bounded by BOTH a line tail
+# (N) AND a byte cap so a runaway log can never blow the artifact up. The
+# in-container vLLM OOM traceback AND the gpu_worker.py measured-peak line
+# both land here (NOT in compose-up stderr — that was C2).
+_FAILURE_LOG_TAIL_LINES = 400
+_FAILURE_LOG_BYTE_CAP = 64 * 1024  # 64 KiB hard ceiling (post-tail)
+
+
 @dataclass
 class BootResult:
     ok: bool
@@ -99,6 +108,14 @@ class BootResult:
     failure: Optional[str] = None
     # The OpenAI-compatible base URL the smoke prober talks to (ok only).
     endpoint: Optional[str] = None
+    # F3/G6-A-ii (ADDITIVE; default None — success-path unchanged): on a
+    # boot FAILURE the CM captures a bounded, `_redact_text`-scrubbed
+    # `docker compose logs --no-color` excerpt of the project BEFORE
+    # teardown (the container still exists then). `capture.py:emit_capture`
+    # reads this (or its explicit `failure_log_excerpt=` param) into
+    # `pt3.failure_log_excerpt` + parses `pt3.actual` from it. Stays None on
+    # success and whenever the runner can't surface a log (honest degrade).
+    failure_log_excerpt: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +133,15 @@ class BootResult:
 #       tear the compose down (ALWAYS called from booted_derived's
 #       __exit__/finally — i.e. AFTER the `with` body, not before the
 #       handle reaches the caller).
+#   .capture_failure_log(project_dir, compose_path) -> str | None
+#       F3/G6-A-ii (ADDITIVE, optional): on a boot FAILURE, return a
+#       bounded `docker compose logs --no-color --tail=N` excerpt of the
+#       project (the CONTAINER log — where the in-container vLLM OOM
+#       traceback + the gpu_worker.py measured-peak line land). Called
+#       BEFORE `.down()` (the container still exists then). A runner
+#       WITHOUT this method (legacy fixture) -> the CM degrades to None
+#       (no excerpt; honest, never raises). `--no-color` is MANDATORY
+#       (ANSI escapes corrupt the Tier-1 regex — Kimi-r2 L1).
 #
 # E3 tests inject a fixture runner (no Docker). The real runner is below.
 # ---------------------------------------------------------------------------
@@ -167,6 +193,47 @@ class DockerComposeRunner:
             time.sleep(3)
         raise BootError("server did not become ready before timeout")
 
+    def capture_failure_log(
+        self, project_dir: str, compose_path: str
+    ) -> Optional[str]:
+        """F3/G6-A-ii: bounded redacted CONTAINER-log excerpt on boot fail.
+
+        `docker compose --project-directory <dir> -f <compose> logs
+        --no-color --tail=N` — the project's container log, where the
+        in-container vLLM `torch.cuda.OutOfMemoryError` traceback AND the
+        `gpu_worker.py` measured-peak line both land (C2: NOT in compose-up
+        stderr). Bounded by `--tail=N` AND a post-fetch byte cap. Scrubbed
+        with `capture.py`'s SAME `_redact_text` (reuse — NOT a weaker
+        re-impl). NEVER raises (best-effort, like `down()`): any failure to
+        obtain a log -> `None` (honest degrade; Tier-1 then can't route as
+        a kv-calc bug, never a confidently-wrong filing). `--no-color` is
+        MANDATORY (ANSI escapes corrupt the Tier-1 regex)."""
+        try:
+            cmd = [
+                "docker", "compose",
+                "--project-directory", project_dir,
+                "-f", compose_path,
+                "logs", "--no-color",
+                f"--tail={_FAILURE_LOG_TAIL_LINES}",
+            ]
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, check=False
+            )
+            raw = (proc.stdout or "") + (
+                ("\n" + proc.stderr) if proc.stderr else ""
+            )
+            if not raw.strip():
+                return None
+            # Byte-cap AFTER the tail (keep the TAIL — the OOM traceback +
+            # gpu_worker peak land at the END of a failing boot).
+            if len(raw) > _FAILURE_LOG_BYTE_CAP:
+                raw = raw[-_FAILURE_LOG_BYTE_CAP:]
+            # REUSE capture.py's _redact_text (NOT a weaker scrub).
+            from scripts.lib.profiles.capture import _redact_text
+            return _redact_text(raw)
+        except Exception:  # pragma: no cover - never raise out of capture
+            return None
+
     def down(self, project_dir: str, compose_path: str) -> None:
         # Best-effort teardown; never raise out of teardown.
         try:
@@ -188,6 +255,26 @@ class DockerComposeRunner:
 # raises (so an exception in the with-body still propagates, with teardown
 # having run).
 # ---------------------------------------------------------------------------
+def _safe_capture_failure_log(
+    runner: Any, project_dir: str, compose_path: str
+) -> Optional[str]:
+    """F3/G6-A-ii: call `runner.capture_failure_log` if the runner provides
+    it (the real `DockerComposeRunner` does; a legacy fixture runner may
+    not). NEVER raises and is called ONLY in the boot-FAILURE branches of
+    `booted_derived`, BEFORE the `finally` teardown — so the container the
+    log comes from still exists. Returns the bounded redacted excerpt, or
+    `None` (no method / empty / any error — honest degrade; downstream
+    Tier-1 then can't route a confidently-wrong kv-calc bug)."""
+    fn = getattr(runner, "capture_failure_log", None)
+    if not callable(fn):
+        return None
+    try:
+        out = fn(project_dir, compose_path)
+        return out if (isinstance(out, str) and out.strip()) else None
+    except Exception:  # pragma: no cover - capture must never raise
+        return None
+
+
 @contextlib.contextmanager
 def booted_derived(
     einput, compose_text: str, *, runner: Optional[Any] = None
@@ -250,11 +337,18 @@ def booted_derived(
         except BootError as exc:
             # EXPECTED boot failure — yield an ok=False handle (do NOT raise
             # out of the CM; the orchestrator must still emit pt3 + capture).
+            # F3/G6-A-ii: capture the bounded redacted CONTAINER log NOW —
+            # the container still exists (teardown is the `finally`, AFTER
+            # this branch). Best-effort: None when the runner can't / has no
+            # `capture_failure_log` (legacy fixture) — honest degrade.
             yield BootResult(
                 ok=False,
                 seconds=round(time.monotonic() - started, 3),
                 failure=str(exc) or "container died (no reason surfaced)",
                 endpoint=None,
+                failure_log_excerpt=_safe_capture_failure_log(
+                    runner, project_dir, compose_path
+                ),
             )
         except Exception as exc:  # pragma: no cover - defensive
             # Truly unexpected (runner contract breach) — still yield an
@@ -265,6 +359,9 @@ def booted_derived(
                 seconds=round(time.monotonic() - started, 3),
                 failure=f"unexpected boot error: {exc!r}",
                 endpoint=None,
+                failure_log_excerpt=_safe_capture_failure_log(
+                    runner, project_dir, compose_path
+                ),
             )
         else:
             # Server is UP. Yield the live handle for the ENTIRE with-body

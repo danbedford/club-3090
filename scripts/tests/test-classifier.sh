@@ -153,12 +153,19 @@ r = classify(fi("a1", pt3=boot_fail(
 check(r.failure_class is FailureClass.GENUINE_OOM,
       f"Appendix-A Cliff-2 OOM -> genuine-oom (got {r.failure_class.value})")
 check(r.route_as_kv_calc_bug is False,
-      "genuine-oom route_as_kv_calc_bug=False in F2 (Tier-1 is F3)")
+      "genuine-oom route_as_kv_calc_bug=False with NO Tier-1 inputs "
+      "present (F3 honest-degrade — never a confidently-wrong kv-calc bug)")
 check(r.should_file is True,
       "genuine-oom should_file=True (classified+filed, not a kv-calc bug)")
-check(r.tier is Tier.TIER2,
-      f"genuine-oom decided by Tier-2 (got {r.tier.value}; never TIER1 "
-      f"in F2)")
+check(r.tier is Tier.TIER1,
+      f"F3: OOM signature -> Tier-1 fast-path decides genuine-oom "
+      f"(got {r.tier.value})")
+check(r.matched_rule == "tier1-oom-fastpath",
+      "F3: Tier-1 fast-path stamps matched_rule=tier1-oom-fastpath")
+check(r.tier1_inputs is not None
+      and r.tier1_inputs.get("predicted_b_breakdown") is None,
+      "F3 honest-degrade: tier1_inputs surfaced, predicted side absent "
+      "(bare pt3.failure, no pt1.predicted_b_breakdown / pt3.actual)")
 
 # Row 2: prefill-cliff OOM (~50-60K, DeltaNet GDN) — works with the F3
 # forward-compat failure_log_excerpt PRESENT.
@@ -296,15 +303,167 @@ check(r.failure_class is FailureClass.UNKNOWN,
 check(r.failure_class.value in ENUM_VALUES,
       "poisoned-DB result still strictly in the 6-member §6.1 enum")
 
-# Sweep every Appendix-A fixture: output ALWAYS ∈ the 6-enum.
+# ---------------------------------------------------------------------------
+# F3 — §6.1 Tier-1 fast-path (CONTRACT-2 A-i/A-ii/A-ii′/A-iii). Tier-1 plugs
+# IN FRONT of Tier-2: the OOM signature -> always genuine-oom, decided by
+# Tier.TIER1. route_as_kv_calc_bug=True ONLY when ALL THREE inputs present
+# (pt1.predicted_b_breakdown + pt3.actual.attempted_alloc_mib +
+# pt3.actual.gpu_worker_reported_mib); else honest-degrade (False). pt5 >
+# pt3-triple > bare precedence. classifier reads structured fields only.
+# ---------------------------------------------------------------------------
+PRED = {"weights_gb": 9.0, "kv_gb": 12.0, "overhead_gb": 1.5}
+
+
+def write_f3_bundle(name, *, pt1_extra=None, pt3=None, pt5=None):
+    d = tmp / name
+    d.mkdir(parents=True, exist_ok=True)
+    pt1 = {
+        "schema": 1, "point": "gate", "slug": "Org/My-Model",
+        "confidence": "estimated-lower-bound", "raw_verdict": "wont-fit",
+        "terminal": "override-accepted", "profile_like": "vllm/minimal",
+        "hardware_sm": 8.6, "predicted_b_breakdown": None,
+    }
+    if pt1_extra:
+        pt1.update(pt1_extra)
+    arts = {
+        "manifest.json": mk_manifest(),
+        "pt1-gate.json": pt1,
+        "pt2-download.json": {
+            "point": "download", "ok": True, "files": ["model.safetensors"],
+            "bytes": 1, "sha_verified": True, "failure": None},
+        "pt3-boot.json": pt3 if pt3 is not None else {
+            "point": "boot", "ok": False, "seconds": 0.0,
+            "failure": "server did not become ready before timeout"},
+        "pt4-smoke.json": {
+            "point": "smoke",
+            "smoke_capability_set": ["plain-chat", "streaming"],
+            "results": {"plain-chat": "unsmoked", "streaming": "unsmoked"},
+            "partial": True, "results_detail": {}},
+    }
+    if pt5 is not None:
+        arts["pt5-override-capture.json"] = pt5
+    for nm, obj in arts.items():
+        (d / nm).write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    return read_capture_bundle(d)
+
+
+# (1) genuine-oom with ALL THREE inputs present -> route_as_kv_calc_bug TRUE
+#     + a predicted-vs-actual delta. (pt3-triple source.)
+fa = write_f3_bundle("f3_all3",
+    pt1_extra={"predicted_b_breakdown": PRED},
+    pt3={"point": "boot", "ok": False, "seconds": 3.0,
+         "failure": "server did not become ready before timeout",
+         "failure_log_excerpt":
+             "torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to "
+             "allocate 2.50 GiB",
+         "actual": {"attempted_alloc_mib": 2560,
+                    "gpu_worker_reported_mib": 22880}})
+r = classify(fa)
+check(r.failure_class is FailureClass.GENUINE_OOM
+      and r.tier is Tier.TIER1,
+      f"F3 (1): OOM + all-3 -> genuine-oom via Tier-1 (got "
+      f"{r.failure_class.value}/{r.tier.value})")
+check(r.route_as_kv_calc_bug is True,
+      "F3 (1): all-3-present -> route_as_kv_calc_bug=True (CONTRACT-2 "
+      "A-ii′ + §11)")
+check(r.predicted_vs_actual_delta_mib == 22880 - int(round(22.5 * 1024)),
+      f"F3 (1): predicted-vs-actual delta = gpu_worker_peak - sum([B]) "
+      f"(got {r.predicted_vs_actual_delta_mib})")
+check((r.tier1_inputs or {}).get("source") == "pt3+pt1",
+      f"F3 (1): inputs resolved from the pt3+pt1 triple "
+      f"(got {(r.tier1_inputs or {}).get('source')})")
+
+# (2) genuine-oom MISSING one input (no gpu_worker peak) -> classified
+#     genuine-oom but route_as_kv_calc_bug FALSE (honest degrade).
+fm = write_f3_bundle("f3_miss",
+    pt1_extra={"predicted_b_breakdown": PRED},
+    pt3={"point": "boot", "ok": False, "seconds": 3.0,
+         "failure": "timeout",
+         "failure_log_excerpt":
+             "torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to "
+             "allocate 2.50 GiB",
+         "actual": {"attempted_alloc_mib": 2560,
+                    "gpu_worker_reported_mib": None}})
+r = classify(fm)
+check(r.failure_class is FailureClass.GENUINE_OOM
+      and r.tier is Tier.TIER1,
+      "F3 (2): still classified genuine-oom via Tier-1 when an input "
+      "is missing")
+check(r.route_as_kv_calc_bug is False,
+      "F3 (2): missing gpu_worker_reported_mib -> route_as_kv_calc_bug "
+      "FALSE (honest degrade, never confidently-wrong)")
+check(r.should_file is True,
+      "F3 (2): genuine-oom still should_file=True (filed as a normal "
+      "issue, just NOT a kv-calc bug)")
+
+# (3) precedence: pt5 structured fields WIN over the pt3 triple (A-iii).
+#     pt5 carries its own predicted_b_breakdown + actual; pt3's triple
+#     would be incomplete, but pt5 supplies all three -> route TRUE, and
+#     the resolved source is pt5.
+fp5 = write_f3_bundle("f3_pt5",
+    pt1_extra={"predicted_b_breakdown": None},
+    pt3={"point": "boot", "ok": False, "seconds": 1.0,
+         "failure": "timeout",
+         "failure_log_excerpt":
+             "torch.cuda.OutOfMemoryError: CUDA out of memory",
+         "actual": {"attempted_alloc_mib": None,
+                    "gpu_worker_reported_mib": None}},
+    pt5={"point": "override_capture",
+         "predicted_b_breakdown": PRED,
+         "actual": {"boot_peak_mib": 23900,
+                    "gpu_worker_reported_mib": 23900},
+         "predicted_vs_actual_delta_mib": 1376,
+         "exit_error_summary": "torch.cuda.OutOfMemoryError: CUDA OOM",
+         "calibration_signal_not_validated": True})
+r = classify(fp5)
+check(r.failure_class is FailureClass.GENUINE_OOM
+      and r.tier is Tier.TIER1,
+      "F3 (3): OOM -> genuine-oom via Tier-1 with pt5 present")
+check((r.tier1_inputs or {}).get("source") == "pt5",
+      f"F3 (3): A-iii precedence — pt5 structured fields WIN over the "
+      f"pt3 triple (got {(r.tier1_inputs or {}).get('source')})")
+check(r.route_as_kv_calc_bug is True,
+      "F3 (3): pt5 supplies all three -> route_as_kv_calc_bug=True")
+
+# (4) Tier-1 MISS (no OOM signature anywhere) -> falls straight through to
+#     the UNCHANGED Tier-2 (AWQ quant mis-load -> quant-unsupported, the
+#     exact F2 behaviour, byte-for-byte unaffected).
+fmiss = write_f3_bundle("f3_t1miss",
+    pt3={"point": "boot", "ok": False, "seconds": 0.0,
+         "failure": "ValueError: Model QuantConfig: the AWQ weight is not "
+                    "supported for this dtype"})
+r = classify(fmiss)
+check(r.tier is Tier.TIER2
+      and r.failure_class is FailureClass.QUANT_UNSUPPORTED,
+      f"F3 (4): no OOM signature -> Tier-1 misses, falls through to "
+      f"UNCHANGED Tier-2 (got {r.tier.value}/{r.failure_class.value})")
+check(r.route_as_kv_calc_bug is False
+      and r.predicted_vs_actual_delta_mib is None
+      and r.tier1_inputs is None,
+      "F3 (4): a Tier-2 result carries NO Tier-1 telemetry (Tier-1 never "
+      "ran) — F2 behaviour byte-unchanged")
+
+# Sweep every Appendix-A fixture: output ALWAYS ∈ the 6-enum; the kv-calc
+# routing gate stays False for EVERY Appendix-A seed (the OOM rows a1/a2
+# have NO Tier-1 inputs -> honest degrade; the rest are Tier-2). Only the
+# OOM-signature rows (a1 Cliff-2, a2 prefill-cliff GDN) reach Tier-1; every
+# non-OOM row still falls through to the unchanged Tier-2 (no F2 regress).
+_OOM_ROWS = {"a1", "a2"}
 for nm in ("a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"):
     rr = classify(read_capture_bundle(tmp / nm))
     check(rr.failure_class.value in ENUM_VALUES,
           f"{nm}: failure_class ∈ §6.1 6-enum ({rr.failure_class.value})")
-    check(rr.tier is not Tier.TIER1,
-          f"{nm}: F2 never emits TIER1 (Tier-1 is the F3 seam)")
+    if nm in _OOM_ROWS:
+        check(rr.tier is Tier.TIER1,
+              f"{nm}: OOM signature -> F3 Tier-1 fast-path (got "
+              f"{rr.tier.value})")
+    else:
+        check(rr.tier is not Tier.TIER1,
+              f"{nm}: non-OOM -> never Tier-1 (falls through to "
+              f"unchanged Tier-2; got {rr.tier.value})")
     check(rr.route_as_kv_calc_bug is False,
-          f"{nm}: route_as_kv_calc_bug HARD-False in F2 (F3 owns it)")
+          f"{nm}: route_as_kv_calc_bug False (a1/a2 honest-degrade — no "
+          f"Tier-1 inputs; rest Tier-2)")
 
 # ---------------------------------------------------------------------------
 # REAL on-disk .pull-captures/ bundle (a success/`partial`): classify

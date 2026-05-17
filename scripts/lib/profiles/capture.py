@@ -367,6 +367,85 @@ def _redact_text(text: str) -> str:
         return text
 
 
+# ---------------------------------------------------------------------------
+# F3/G6-A-ii′ — the `pt3.actual` parse helper (capture-time, [E]-owned).
+#
+# Both inputs are regexed out of the SAME already-captured + redacted
+# `failure_log_excerpt` (the booter's bounded `docker compose logs
+# --no-color` text). `--no-color` is MANDATORY upstream (ANSI escapes
+# corrupt these regexes) — see booter.capture_failure_log.
+#
+#   attempted_alloc_mib      — the torch.cuda.OutOfMemoryError traceback's
+#                              "Tried to allocate <N> {MiB|GiB|KiB|B}" figure
+#                              (the size the allocation that OOM'd asked for).
+#   gpu_worker_reported_mib  — the gpu_worker.py measured-peak line
+#                              ("... peak ... <N> {MiB|GiB} ..." emitted by
+#                              vLLM's GPU worker memory profiler).
+#
+# Either is `None` when not found — NEVER fabricate a number (the §1
+# confidently-wrong rule; the F3 routing gate then honest-degrades). This
+# helper is `[E]`-owned (CONTRACT-1: classifier.py only READS pt3.actual).
+# ---------------------------------------------------------------------------
+_ALLOC_UNIT_TO_MIB = {
+    "b": 1.0 / (1024.0 * 1024.0),
+    "kib": 1.0 / 1024.0,
+    "kb": 1.0 / 1024.0,
+    "mib": 1.0,
+    "mb": 1.0,
+    "gib": 1024.0,
+    "gb": 1024.0,
+}
+
+# "Tried to allocate 512.00 MiB" / "Tried to allocate 2.50 GiB" etc.
+_RE_ATTEMPTED_ALLOC = re.compile(
+    r"tried to allocate\s+([0-9]+(?:\.[0-9]+)?)\s*(B|KiB|KB|MiB|MB|GiB|GB)",
+    re.IGNORECASE,
+)
+# vLLM gpu_worker peak line, tolerant of phrasing:
+#   "gpu_worker.py ... peak memory ... 22880.00 MiB"
+#   "GPU memory peak: 22.34 GiB"
+#   "Maximum memory usage ... 22880 MiB"
+_RE_GPU_WORKER_PEAK = re.compile(
+    r"(?:gpu[_ ]?worker|peak memory|memory peak|maximum memory|"
+    r"peak gpu memory|max memory)[^0-9\n]*?"
+    r"([0-9]+(?:\.[0-9]+)?)\s*(MiB|MB|GiB|GB)",
+    re.IGNORECASE,
+)
+
+
+def _to_mib(value: str, unit: str) -> Optional[int]:
+    try:
+        factor = _ALLOC_UNIT_TO_MIB.get(unit.lower())
+        if factor is None:
+            return None
+        return int(round(float(value) * factor))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_pt3_actual(excerpt: Optional[str]) -> dict:
+    """Regex the two Tier-1 actual-side inputs out of the redacted excerpt.
+
+    Returns the structured first-class `{attempted_alloc_mib:int|None,
+    gpu_worker_reported_mib:int|None}` object (both `None` when not found —
+    never fabricated). The OOM-signature gate itself is `[F]`'s job
+    (classifier.py Tier-1); this only extracts the numbers `[E]` measured.
+    """
+    attempted: Optional[int] = None
+    gpu_worker: Optional[int] = None
+    if excerpt:
+        m = _RE_ATTEMPTED_ALLOC.search(excerpt)
+        if m:
+            attempted = _to_mib(m.group(1), m.group(2))
+        g = _RE_GPU_WORKER_PEAK.search(excerpt)
+        if g:
+            gpu_worker = _to_mib(g.group(1), g.group(2))
+    return {
+        "attempted_alloc_mib": attempted,
+        "gpu_worker_reported_mib": gpu_worker,
+    }
+
+
 def _write_redacted_json(path: Path, obj: dict) -> None:
     raw = json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False)
     path.write_text(_redact_text(raw) + "\n", encoding="utf-8")
@@ -415,6 +494,8 @@ def emit_capture(
     kv_calc_version: str,
     repo_root: Path,
     ts: Optional[str] = None,
+    predicted_b_breakdown=None,
+    failure_log_excerpt: Optional[str] = None,
 ) -> dict:
     """Write the 4 §6 capture-point artifacts (pt1 gate / pt2 download /
     pt3 boot / pt4 smoke) + a top-level `manifest.json`, schema v1, JSON,
@@ -424,14 +505,48 @@ def emit_capture(
 
     Returns `{paths:{...}, dir:str, manifest:{...}}`. CONTRACT-4 EXACTLY:
       pt1 gate     {schema, point, slug, confidence, raw_verdict, terminal,
-                    profile_like, hardware_sm}
+                    profile_like, hardware_sm, predicted_b_breakdown}
       pt2 download {point, ok, files, bytes, sha_verified, failure}
-      pt3 boot     {point, ok, seconds, failure}
+      pt3 boot     {point, ok, seconds, failure
+                    [, failure_log_excerpt, actual]  -- only when NOT ok}
       pt4 smoke    {point, smoke_capability_set, results, partial}
 
     CAPTURE-POINT 5 (override-accepted force-capture) is OUT of E3 scope —
     NOT emitted here (E4 wires it). `failure_class` is left **null** — E3
     must NOT classify (§6.1 = `[F]`'s job).
+
+    F3/G6-A — the 3-part additive `[E]` touch (CONTRACT-2 G6-(A); all
+    additive, every existing key byte-preserved):
+
+      * A-i `predicted_b_breakdown` (kw-only, default `None`): the `[B]`
+        kv-calc GB breakdown that produced the verdict
+        (`res.diagnostics["b_breakdown"]` == `raw_verdict()["breakdown_gb"]`,
+        `pull.py:638`). Persisted into **pt1** for ALL post-`[B]` captures
+        (C1: previously on disk only in pt5/override). The key is ALWAYS
+        present in pt1 (value `None` when the caller passes nothing) — pt1
+        already emits a fixed key set, so an always-present additive key
+        keeps that shape; no EXISTING pt1 key's value or bytes change
+        (JSON is `sort_keys=True`: a new key inserts its own line, it never
+        mutates an existing key's serialization). F1's `read_capture_bundle`
+        + F2's classifier were built to tolerate this exact key
+        absent-or-present.
+
+      * A-ii `failure_log_excerpt` (kw-only, default `None`): the bounded,
+        `_redact_text`-scrubbed `docker compose logs --no-color` excerpt the
+        booter captured BEFORE teardown (C2: the in-container vLLM OOM
+        traceback + the gpu_worker peak line live there, NOT in compose-up
+        stderr). Written into **pt3 ONLY when `not ok`** — so the success
+        path pt3 is byte-identical to today (NO new keys at all when boot
+        ok); a failure pt3 gains `failure_log_excerpt`.
+
+      * A-ii′ `pt3.actual`: emitted HERE at capture time (NOT in
+        classifier.py — `[F]` stays a pure bundle reader, CONTRACT-1). When
+        pt3 is `not ok` and we have an excerpt, `_parse_pt3_actual()`
+        regexes `attempted_alloc_mib` (the OOM traceback "Tried to allocate"
+        line) and `gpu_worker_reported_mib` (the gpu_worker peak line) out
+        of that SAME captured excerpt into the structured first-class
+        `pt3.actual = {attempted_alloc_mib:int|None,
+        gpu_worker_reported_mib:int|None}`. classifier.py only READS this.
     """
     san = sanitize_slug(einput.slug)
     stamp = ts or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -439,6 +554,9 @@ def emit_capture(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- pt1: pre-download gate verdict --------------------------------
+    # F3/G6-A-i: `predicted_b_breakdown` is ALWAYS present (None when the
+    # caller passes nothing) — pt1 emits a fixed key set, so this additive
+    # key keeps that shape. No EXISTING key value/bytes change.
     pt1 = {
         "schema": SCHEMA,
         "point": "gate",
@@ -448,6 +566,7 @@ def emit_capture(
         "terminal": einput.terminal,
         "profile_like": profile_like,
         "hardware_sm": einput.hardware_sm,
+        "predicted_b_breakdown": predicted_b_breakdown,
     }
 
     # ---- pt2: download (the E2 DownloadResult shape) -------------------
@@ -461,12 +580,29 @@ def emit_capture(
     }
 
     # ---- pt3: boot -----------------------------------------------------
+    # The 4 LOCKED keys are byte-behaviour-unchanged. F3/G6-A-ii + A-ii′:
+    # `failure_log_excerpt` (the booter's bounded redacted
+    # `docker compose logs --no-color` excerpt) and the structured
+    # `actual.{attempted_alloc_mib,gpu_worker_reported_mib}` are added
+    # **ONLY when boot is NOT ok** — so the success-path pt3 is byte-
+    # identical to today (no new keys at all); a failure pt3 gains them.
     pt3 = {
         "point": "boot",
         "ok": bool(getattr(boot_result, "ok", False)),
         "seconds": float(getattr(boot_result, "seconds", 0.0) or 0.0),
         "failure": getattr(boot_result, "failure", None),
     }
+    if not pt3["ok"]:
+        # Prefer the explicitly-passed excerpt; else the booter may have
+        # stashed it on the BootResult (additive attribute, default None).
+        excerpt = failure_log_excerpt
+        if excerpt is None:
+            excerpt = getattr(boot_result, "failure_log_excerpt", None)
+        excerpt_red = (
+            _redact_text(str(excerpt)) if excerpt else None
+        )
+        pt3["failure_log_excerpt"] = excerpt_red
+        pt3["actual"] = _parse_pt3_actual(excerpt_red)
 
     # ---- pt4: post-boot capability-aware smoke ------------------------
     # `point` / `smoke_capability_set` / `results` / `partial` are the

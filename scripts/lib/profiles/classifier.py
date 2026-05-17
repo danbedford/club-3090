@@ -1,22 +1,30 @@
-"""v0.8.0 Loop `[F]` — STEP F2: the §6.1 Tier-2 semantic-fingerprint classifier.
+"""v0.8.0 Loop `[F]` — STEP F2+F3: the §6.1 two-tier failure classifier.
 
-CONTRACT-2 Tier-2 (the LOCKED brief — `/opt/ai/docs/v0.8.0-loop-brief.md`
+CONTRACT-2 (the LOCKED brief — `/opt/ai/docs/v0.8.0-loop-brief.md`
 "## CONTRACT 2" + "## Appendix A"; source-of-truth design §6.1
 `/opt/ai/docs/v0.8.x-design.md`). F1 (`loop_input.py`) produced the
 validated `FInput`; this module CONSUMES it and emits exactly one §6.1
 class or `unknown`.
 
-Scope boundary (F2 vs F3):
-  * F2 implements ONLY the §6.1 **Tier-2** semantic-fingerprint classifier
-    + the seed DB + the routing rules that do NOT need Tier-1 data.
-  * Tier-1 (the `torch.cuda.OutOfMemoryError` regex fast-path that emits a
-    predicted-vs-actual delta = candidate kv-calc bug) is a LATER STEP F3.
-    F3 needs the additive `[E]` touch (pt1.predicted_b_breakdown,
-    pt3.failure_log_excerpt, pt3.actual.{...}) that F2 must NOT do. F2
-    leaves a clean seam: `Tier.TIER1` exists in the enum but is never
-    emitted here, and `route_as_kv_calc_bug` is HARD-WIRED False with the
-    comment that F3's Tier-1 owns that gate (only `genuine-oom` WITH all
-    three Tier-1 inputs present may ever set it — F2 has none of that).
+Two tiers (F2 shipped Tier-2; F3 added Tier-1 IN FRONT):
+  * **Tier-1 (F3)** — the `torch.cuda.OutOfMemoryError` regex fast-path:
+    on the definitive OOM signature -> always `genuine-oom`, decided by
+    `Tier.TIER1`, with the predicted-vs-actual delta and the
+    kv-calc-bug routing gate. It reads ONLY the structured `[E]` fields
+    F3's additive `[E]` touch persists (pt1.predicted_b_breakdown,
+    pt3.failure_log_excerpt → error_substring, pt3.actual.{...}, or the
+    richer pt5 by A-iii precedence) — NEVER raw logs (CONTRACT-1:
+    classifier.py is a pure bundle reader). Tier-1 is the ONLY path
+    allowed to set `route_as_kv_calc_bug=True`, and ONLY when
+    `failure_class==genuine-oom` AND `predicted_b_breakdown` AND
+    `attempted_alloc_mib` AND `gpu_worker_reported_mib` are ALL present
+    (else `genuine-oom` is still classified+filed, but
+    `route_as_kv_calc_bug=False` — honest degrade, never a
+    confidently-wrong kv-calc-bug filing).
+  * **Tier-2 (F2)** — the semantic-fingerprint DB + Appendix-A seed
+    matchers. Reached ONLY when Tier-1 finds no OOM signature (Tier-1
+    returns `None` -> fall straight through; F2 behaviour byte-unchanged).
+    Tier-2 NEVER sets `route_as_kv_calc_bug` (hard-False there).
 
 §6.1 enum (VERBATIM — exactly these 6, no 7th value can leak):
     genuine-oom | overlay-arch-drift | kernel-unsupported |
@@ -44,6 +52,7 @@ structured results, never raise for an expected outcome).
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -128,7 +137,19 @@ class ClassificationResult:
                              issue body / maintainer review).
     `matched_rule`         — id of the seed rule that matched, or None
                              (exact-hash hit -> the fingerprint; no match
-                             -> None).
+                             -> None; Tier-1 OOM fast-path -> the literal
+                             "tier1-oom-fastpath").
+    `predicted_vs_actual_delta_mib`
+                           — F3 Tier-1 ONLY: the candidate kv-calc-bug
+                             signal = actual_peak_mib - predicted_total_mib
+                             (gpu_worker measured peak minus the summed [B]
+                             predicted breakdown), or None when Tier-1 did
+                             not fire / inputs incomplete. NEVER fabricated.
+    `tier1_inputs`         — F3 Tier-1 ONLY: the resolved
+                             {predicted_b_breakdown, attempted_alloc_mib,
+                             gpu_worker_reported_mib, source} triple
+                             (source ∈ {pt5, pt3+pt1, None}). `None` when
+                             Tier-1 did not fire.
     """
 
     failure_class: FailureClass
@@ -139,6 +160,10 @@ class ClassificationResult:
     review_queue: bool
     error_substring: str
     matched_rule: Optional[str] = None
+    # F3 Tier-1 additive telemetry (default None so every existing F2
+    # construction + assertion is byte-unaffected — F2 never sets these).
+    predicted_vs_actual_delta_mib: Optional[int] = None
+    tier1_inputs: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +334,195 @@ def _match_condition(rule: dict, finput: FInput,
     return False
 
 
+# ---------------------------------------------------------------------------
+# F3 — §6.1 Tier-1 rule fast-path (CONTRACT-2 A-i/A-ii/A-ii′/A-iii).
+#
+# Tier-1 plugs IN FRONT of Tier-2. It ONLY handles the definitive OOM
+# fast-path; ANYTHING else (no OOM signature) returns None and falls
+# straight through to F2's unchanged Tier-2 (no F2 regression).
+#
+# §6.1 verbatim: "regex for the definitive OOM signature
+# (torch.cuda.OutOfMemoryError during weight/KV allocation). Match ->
+# extract attempted-allocation size from traceback + gpu_worker.py measured
+# peak -> diff vs kv-calc predicted -> emit predicted-vs-actual delta =
+# candidate kv-calc bug."
+#
+# classifier.py is a PURE bundle reader (CONTRACT-1): it reads the
+# structured `pt3.actual` / `pt1.predicted_b_breakdown` / `pt5` fields `[E]`
+# emitted — it NEVER parses raw logs (the regex below is only the OOM
+# *signature* detector on the already-redacted excerpt; the numbers come
+# from `[E]`'s `pt3.actual`).
+#
+# Routing gate (CONTRACT-2 A-ii′ + §11, verbatim): set
+# route_as_kv_calc_bug=True ONLY when failure_class==genuine-oom AND
+# predicted_b_breakdown AND attempted_alloc_mib AND gpu_worker_reported_mib
+# are ALL present; else classify normally (genuine-oom) but
+# route_as_kv_calc_bug=False (honest degrade — never a confidently-wrong
+# kv-calc-bug filing).
+#
+# A-iii input precedence (verbatim):
+#   pt5 structured fields
+#     > (pt3 failure_log_excerpt + pt3.actual + pt1 predicted_b_breakdown)
+#       > pt3.failure bare string
+# ---------------------------------------------------------------------------
+
+# The definitive OOM signature. `torch.cuda.OutOfMemoryError` is the
+# weight/KV-allocation OOM vLLM/torch raises; tolerate the common phrasings.
+_RE_OOM_SIGNATURE = re.compile(
+    r"torch\.cuda\.outofmemoryerror"
+    r"|cuda out of memory"
+    r"|cuda error: out of memory"
+    r"|outofmemoryerror: cuda",
+    re.IGNORECASE,
+)
+
+
+def _predicted_total_mib(breakdown) -> Optional[int]:
+    """Sum a `[B]` `{component: GB}` breakdown -> MiB total (the predicted
+    side of the delta). None when not a usable numeric mapping — NEVER
+    fabricate (the §1 confidently-wrong rule). Mirrors
+    `capture._predicted_total_mib` (same convention; kept local so the
+    classifier has no import-time dependency on capture.py).
+    """
+    if not isinstance(breakdown, dict) or not breakdown:
+        return None
+    total_gb = 0.0
+    saw = False
+    for v in breakdown.values():
+        if isinstance(v, (int, float)):
+            total_gb += float(v)
+            saw = True
+    if not saw:
+        return None
+    return int(round(total_gb * 1024.0))
+
+
+def _resolve_tier1_inputs(finput: FInput) -> dict:
+    """Resolve the THREE Tier-1 inputs by the A-iii precedence
+    (pt5 > pt3-triple). Returns a dict ALWAYS carrying the keys
+    `predicted_b_breakdown`, `attempted_alloc_mib`,
+    `gpu_worker_reported_mib`, `source` (each value may be None).
+
+    `source`:
+      "pt5"      — taken from the override-accepted pt5 (richest); its
+                   `actual.{boot_peak_mib,gpu_worker_reported_mib}` is the
+                   measured side, `predicted_b_breakdown` the predicted.
+                   pt5's measured "attempted alloc" proxy is `boot_peak_mib`
+                   (the peak the forced low-confidence boot actually hit).
+      "pt3+pt1"  — the normal-path triple: pt1.predicted_b_breakdown +
+                   pt3.actual.{attempted_alloc_mib,gpu_worker_reported_mib}.
+      None       — neither source carried usable structured fields.
+    """
+    # --- (1) pt5 structured fields win when present (A-iii) -------------
+    pt5 = finput.pt5_override
+    if isinstance(pt5, dict):
+        pred = pt5.get("predicted_b_breakdown")
+        actual = pt5.get("actual")
+        if isinstance(actual, dict):
+            return {
+                "predicted_b_breakdown": pred,
+                # pt5's measured "attempted/used" side is boot_peak_mib.
+                "attempted_alloc_mib": actual.get("boot_peak_mib"),
+                "gpu_worker_reported_mib": actual.get(
+                    "gpu_worker_reported_mib"
+                ),
+                "source": "pt5",
+            }
+
+    # --- (2) the normal-path triple: pt3.actual + pt1.predicted --------
+    pt3 = finput.pt3_boot or {}
+    pt1 = finput.pt1_gate or {}
+    actual = pt3.get("actual")
+    if isinstance(actual, dict) or pt1.get("predicted_b_breakdown") is not None:
+        a = actual if isinstance(actual, dict) else {}
+        return {
+            "predicted_b_breakdown": pt1.get("predicted_b_breakdown"),
+            "attempted_alloc_mib": a.get("attempted_alloc_mib"),
+            "gpu_worker_reported_mib": a.get("gpu_worker_reported_mib"),
+            "source": "pt3+pt1",
+        }
+
+    return {
+        "predicted_b_breakdown": None,
+        "attempted_alloc_mib": None,
+        "gpu_worker_reported_mib": None,
+        "source": None,
+    }
+
+
+def _tier1_oom_fastpath(
+    finput: FInput, error_substring: str
+) -> Optional[ClassificationResult]:
+    """The §6.1 Tier-1 fast-path. Returns a `ClassificationResult` IFF the
+    definitive OOM signature is present (always `genuine-oom`); else `None`
+    -> the caller falls through to the unchanged Tier-2.
+
+    A-iii precedence for the OOM-signature SOURCE: the pt3
+    `failure_log_excerpt` (already in `error_substring` via
+    `_extract_error_substring`'s precedence chain) else the pt3 `failure`
+    bare string. The NUMBERS are read from the structured `pt3.actual` /
+    `pt1.predicted_b_breakdown` / `pt5` fields (`_resolve_tier1_inputs`) —
+    classifier.py never parses raw logs (CONTRACT-1).
+    """
+    pt3 = finput.pt3_boot or {}
+    pt5 = finput.pt5_override
+
+    # OOM-signature surface (A-iii): the excerpt-derived error_substring
+    # (F1/F2 precedence already prefers pt3.failure_log_excerpt, then the
+    # bare pt3.failure); plus the pt5 exit summary when present.
+    sig_text = error_substring or ""
+    if isinstance(pt5, dict) and pt5.get("exit_error_summary"):
+        sig_text = f"{sig_text} {str(pt5['exit_error_summary']).lower()}"
+    if not _RE_OOM_SIGNATURE.search(sig_text):
+        return None  # not the OOM fast-path -> fall through to Tier-2.
+
+    # Definitive OOM -> genuine-oom (Tier-1).
+    cls = FailureClass.GENUINE_OOM
+    inputs = _resolve_tier1_inputs(finput)
+
+    pred_mib = _predicted_total_mib(inputs.get("predicted_b_breakdown"))
+    attempted = inputs.get("attempted_alloc_mib")
+    gpu_worker = inputs.get("gpu_worker_reported_mib")
+
+    # Routing gate (CONTRACT-2 A-ii′ + §11): ALL THREE present.
+    all_three_present = (
+        inputs.get("predicted_b_breakdown") is not None
+        and attempted is not None
+        and gpu_worker is not None
+    )
+    route_as_kv_calc_bug = bool(all_three_present)
+
+    # predicted-vs-actual delta = measured gpu_worker peak - predicted
+    # total. Only when BOTH sides are usable numbers (never fabricate).
+    delta: Optional[int] = None
+    if gpu_worker is not None and pred_mib is not None:
+        try:
+            delta = int(gpu_worker) - int(pred_mib)
+        except (TypeError, ValueError):
+            delta = None
+
+    # §6.1 routing: genuine-oom is a real, fileable failure (should_file
+    # True) regardless of the kv-calc-bug gate. The kv-calc-bug signal is
+    # the ADDITIONAL routing on top, gated on all-3-present (honest degrade
+    # otherwise: classified + filed as a normal issue, never a
+    # confidently-wrong kv-calc bug).
+    fp = _fingerprint(
+        error_substring, finput.arch_family, finput.engine_version
+    )
+    return ClassificationResult(
+        failure_class=cls,
+        tier=Tier.TIER1,
+        fingerprint=fp,
+        should_file=cls not in _SUPPRESSED_NEVER_FILED,
+        route_as_kv_calc_bug=route_as_kv_calc_bug,
+        review_queue=False,
+        error_substring=error_substring,
+        matched_rule="tier1-oom-fastpath",
+        predicted_vs_actual_delta_mib=delta,
+        tier1_inputs=inputs,
+    )
+
+
 def _coerce_class(value) -> FailureClass:
     """Map a DB string to the enum. ANY value not in the 6-member §6.1
     enum (a corrupt/typo'd seed row, an out-of-enum 7th value) degrades to
@@ -356,16 +570,18 @@ def classify(
     engine_version = finput.engine_version
     fp = _fingerprint(error_substring, arch_family, engine_version)
 
-    # ---- F3 SEAM -------------------------------------------------------
-    # Tier-1 (the torch.cuda.OutOfMemoryError fast-path that emits a
-    # predicted-vs-actual delta = candidate kv-calc bug) plugs in HERE, IN
-    # FRONT of the Tier-2 block below, in STEP F3. It will read
-    # pt1.predicted_b_breakdown + pt3.actual.{attempted_alloc_mib,
-    # gpu_worker_reported_mib} (the additive [E] touch F2 must NOT do) and
-    # be the ONLY path allowed to set route_as_kv_calc_bug=True (and only
-    # when ALL THREE inputs are present). F2 implements NO Tier-1: it
-    # falls straight through to Tier-2. `Tier.TIER1` exists in the enum
-    # purely so F3 needs no enum change.
+    # ---- F3 Tier-1 (IN FRONT of Tier-2) --------------------------------
+    # The §6.1 Tier-1 rule fast-path: regex the definitive OOM signature;
+    # on a match -> always `genuine-oom`, decided by Tier.TIER1, with the
+    # predicted-vs-actual delta + the all-3-present kv-calc-bug routing
+    # gate (CONTRACT-2 A-ii′ + §11). It reads ONLY the structured `[E]`
+    # fields (pt5 > pt3.actual+pt1.predicted_b_breakdown, A-iii precedence)
+    # — never raw logs (CONTRACT-1: classifier.py is a pure bundle reader).
+    # NO OOM signature -> `None` -> fall straight through to the unchanged
+    # Tier-2 block below (no F2 regression).
+    t1 = _tier1_oom_fastpath(finput, error_substring)
+    if t1 is not None:
+        return t1
 
     # ---- Tier-2 --------------------------------------------------------
     matched_rule: Optional[str] = None

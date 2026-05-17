@@ -1064,6 +1064,22 @@ def _run_derived_e_stage(
                     kv_calc_version=_KV_CALC_VERSION,
                     repo_root=root,
                     ts=ts,
+                    # F3/G6-A — PURE pass-through wiring (NO decision-logic
+                    # change; gate/terminal/[B]/[C1]/is_override_accepted
+                    # untouched). A-i: the predicted [B] breakdown that
+                    # already exists at pull.py:638 (== raw_verdict()
+                    # ["breakdown_gb"]), now persisted into pt1 on every
+                    # post-[B] capture (was disk-only in pt5). A-ii: the
+                    # booter's bounded redacted container-log excerpt
+                    # (None on success / when unavailable — emit_capture
+                    # writes failure_log_excerpt + parses pt3.actual ONLY
+                    # when boot is not ok).
+                    predicted_b_breakdown=res.diagnostics.get(
+                        "b_breakdown"
+                    ),
+                    failure_log_excerpt=getattr(
+                        bt, "failure_log_excerpt", None
+                    ),
                 )
                 res.capture_paths = list((cap.get("paths") or {}).values())
                 res.diagnostics["capture_dir"] = cap.get("dir")

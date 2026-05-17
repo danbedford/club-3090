@@ -390,12 +390,22 @@ with tempfile.TemporaryDirectory() as td:
     p = out["paths"]
 
     pt1 = json.loads(Path(p["gate"]).read_text())
+    # F3/G6-A-i: pt1 gains the ALWAYS-present additive
+    # `predicted_b_breakdown` key (None when the caller passes nothing —
+    # this call site does not). EXISTING keys byte-unchanged; the ONLY
+    # delta is the new key (tightened, never weakened).
     check(pt1 == {
         "schema": 1, "point": "gate", "slug": "org/My-Model",
         "confidence": "ESTIMATED_LOWER_BOUND", "raw_verdict": "fits-clean",
         "terminal": "proceed", "profile_like": "vllm/gemma-a4b-single",
-        "hardware_sm": 8.6,
-    }, f"pt1 gate EXACT CONTRACT-4 schema/keys (got {sorted(pt1)})")
+        "hardware_sm": 8.6, "predicted_b_breakdown": None,
+    }, f"pt1 gate EXACT CONTRACT-4 schema/keys + additive "
+       f"predicted_b_breakdown (got {sorted(pt1)})")
+    check(set(pt1) - {"predicted_b_breakdown"} == {
+        "schema", "point", "slug", "confidence", "raw_verdict",
+        "terminal", "profile_like", "hardware_sm"},
+        "F3/G6-A-i: predicted_b_breakdown is the ONLY new pt1 key "
+        "(every locked pt1 key byte-preserved)")
 
     pt2 = json.loads(Path(p["download"]).read_text())
     check(pt2 == {
@@ -505,6 +515,134 @@ with tempfile.TemporaryDirectory() as td:
     for art in out2["paths"].values():
         check("/opt/ai" not in Path(art).read_text(),
               f"redaction: leaky /opt/ai scrubbed from {Path(art).name}")
+
+# ---------------------------------------------------------------------------
+# 4b. F3/G6-A — the 3-part additive [E] touch (CONTRACT-2 G6-(A)):
+#   A-i  pt1.predicted_b_breakdown CARRIES the [B] breakdown when passed
+#        (was disk-only in pt5; now on every post-[B] capture);
+#   A-ii pt3.failure_log_excerpt is written ONLY when boot NOT ok (success
+#        path byte-identical — proven by §4's boot-ok pt3 exact-shape);
+#   A-ii′ pt3.actual.{attempted_alloc_mib,gpu_worker_reported_mib} is parsed
+#        AT CAPTURE TIME by [E] from that SAME excerpt (classifier only
+#        reads it). All additive; existing keys byte-preserved.
+# ---------------------------------------------------------------------------
+PRED_BREAKDOWN = {"weights_gb": 9.0, "kv_gb": 12.0, "overhead_gb": 1.5}
+# A representative redacted-able container log: vLLM OOM traceback ("Tried
+# to allocate ...") + the gpu_worker measured-peak line + a leaky path the
+# SAME _redact_text discipline must scrub.
+OOM_LOG = (
+    "vllm-derived-1  | INFO gpu_worker.py:184 GPU memory peak: "
+    "22880.00 MiB after profiling\n"
+    "vllm-derived-1  | Loading weights from /opt/ai/secret/model ...\n"
+    "vllm-derived-1  | torch.cuda.OutOfMemoryError: CUDA out of memory. "
+    "Tried to allocate 2.50 GiB (GPU 0; 24.00 GiB total capacity)\n"
+)
+res_boot_fail = B.BootResult(
+    ok=False, seconds=4.2,
+    failure="server did not become ready before timeout",
+    endpoint=None,
+)
+
+with tempfile.TemporaryDirectory() as td:
+    # (A-i) pt1 carries predicted_b_breakdown VERBATIM when passed.
+    out_ok = C.emit_capture(
+        ei, confidence=SimpleNamespace(name="EXACT"),
+        raw_verdict="fits-clean", profile_like="vllm/x",
+        download_result=dl, boot_result=res, smoke_result=sm,
+        compose_meta=compose_meta, kv_calc_version="kvcalc-v7",
+        repo_root=Path(td), ts="20260517T150000Z",
+        predicted_b_breakdown=PRED_BREAKDOWN,
+    )
+    pt1_b = json.loads(Path(out_ok["paths"]["gate"]).read_text())
+    check(pt1_b["predicted_b_breakdown"] == PRED_BREAKDOWN,
+          f"F3 A-i: pt1.predicted_b_breakdown carries the [B] breakdown "
+          f"when passed (got {pt1_b.get('predicted_b_breakdown')!r})")
+    # boot-OK -> pt3 stays the locked 4-key shape (A-ii: only-when-not-ok).
+    pt3_ok = json.loads(Path(out_ok["paths"]["boot"]).read_text())
+    check(set(pt3_ok) == {"point", "ok", "seconds", "failure"},
+          f"F3 A-ii: boot-OK pt3 byte-identical (NO failure_log_excerpt / "
+          f"actual on the success path) (got {sorted(pt3_ok)})")
+
+    # (A-ii + A-ii′) boot-FAIL with an explicit failure_log_excerpt ->
+    # pt3 gains failure_log_excerpt (redacted) + the parsed actual object.
+    out_f = C.emit_capture(
+        ei, confidence=SimpleNamespace(name="EXACT"),
+        raw_verdict="wont-fit", profile_like="vllm/x",
+        download_result=dl, boot_result=res_boot_fail, smoke_result=sm,
+        compose_meta=compose_meta, kv_calc_version="kvcalc-v7",
+        repo_root=Path(td), ts="20260517T151000Z",
+        predicted_b_breakdown=PRED_BREAKDOWN,
+        failure_log_excerpt=OOM_LOG,
+    )
+    pt3_f = json.loads(Path(out_f["paths"]["boot"]).read_text())
+    check(pt3_f["point"] == "boot" and pt3_f["ok"] is False,
+          "F3 A-ii: failure pt3 keeps the locked point/ok/seconds/failure")
+    check("failure_log_excerpt" in pt3_f and pt3_f["failure_log_excerpt"],
+          "F3 A-ii: pt3.failure_log_excerpt present on boot failure")
+    check("Tried to allocate 2.50 GiB" in pt3_f["failure_log_excerpt"]
+          and "/opt/ai" not in pt3_f["failure_log_excerpt"],
+          "F3 A-ii: excerpt carries the OOM traceback + is _redact_text'd "
+          "(no /opt/ai leak)")
+    check(isinstance(pt3_f.get("actual"), dict)
+          and set(pt3_f["actual"]) == {"attempted_alloc_mib",
+                                       "gpu_worker_reported_mib"},
+          f"F3 A-ii′: pt3.actual structured object emitted at capture time "
+          f"(got {pt3_f.get('actual')!r})")
+    check(pt3_f["actual"]["attempted_alloc_mib"] == 2560,
+          f"F3 A-ii′: attempted_alloc_mib parsed (2.50 GiB -> 2560 MiB) "
+          f"(got {pt3_f['actual']['attempted_alloc_mib']})")
+    check(pt3_f["actual"]["gpu_worker_reported_mib"] == 22880,
+          f"F3 A-ii′: gpu_worker_reported_mib parsed from the gpu_worker "
+          f"peak line (22880 MiB) (got "
+          f"{pt3_f['actual']['gpu_worker_reported_mib']})")
+
+    # (A-ii′ honest-degrade) boot-FAIL with NO excerpt -> keys still added
+    # (only-when-not-ok) but actual is all-None (never fabricated).
+    out_n = C.emit_capture(
+        ei, confidence=SimpleNamespace(name="EXACT"),
+        raw_verdict="wont-fit", profile_like="vllm/x",
+        download_result=dl, boot_result=res_boot_fail, smoke_result=sm,
+        compose_meta=compose_meta, kv_calc_version="kvcalc-v7",
+        repo_root=Path(td), ts="20260517T152000Z",
+    )
+    pt3_n = json.loads(Path(out_n["paths"]["boot"]).read_text())
+    check(pt3_n.get("failure_log_excerpt") is None
+          and pt3_n["actual"] == {"attempted_alloc_mib": None,
+                                  "gpu_worker_reported_mib": None},
+          f"F3 A-ii′ honest-degrade: no excerpt -> actual all-None, never "
+          f"fabricated (got {pt3_n.get('actual')!r})")
+
+    # The booter stashes failure_log_excerpt on the BootResult; emit_capture
+    # picks it up WITHOUT an explicit param (the pull.py pass-through path).
+    res_with_log = B.BootResult(
+        ok=False, seconds=1.0, failure="boom", endpoint=None,
+        failure_log_excerpt=OOM_LOG,
+    )
+    out_s = C.emit_capture(
+        ei, confidence=SimpleNamespace(name="EXACT"),
+        raw_verdict="wont-fit", profile_like="vllm/x",
+        download_result=dl, boot_result=res_with_log, smoke_result=sm,
+        compose_meta=compose_meta, kv_calc_version="kvcalc-v7",
+        repo_root=Path(td), ts="20260517T153000Z",
+    )
+    pt3_s = json.loads(Path(out_s["paths"]["boot"]).read_text())
+    check(pt3_s["actual"]["attempted_alloc_mib"] == 2560
+          and pt3_s["actual"]["gpu_worker_reported_mib"] == 22880,
+          "F3: BootResult.failure_log_excerpt is read by emit_capture even "
+          "without an explicit param (the booter->pull->[E] path)")
+
+    # Default-call (NO new params) — pt1 carries the key as None; pt3 on a
+    # boot-OK capture has NO new keys at all (forward-compat: F1
+    # read_capture_bundle + F2 classify already tolerate this exactly).
+    from scripts.lib.profiles.loop_input import read_capture_bundle as _rcb
+    fi_ok = _rcb(Path(out_ok["dir"]))
+    check(fi_ok.pt1_gate["predicted_b_breakdown"] == PRED_BREAKDOWN,
+          "F3 forward-compat: F1 read_capture_bundle surfaces "
+          "pt1.predicted_b_breakdown")
+    check("failure_log_excerpt" not in fi_ok.pt3_boot
+          and "actual" not in fi_ok.pt3_boot,
+          "F3 forward-compat: boot-OK bundle parses with NO pt3 F3 keys "
+          "(additive-absent tolerated)")
 
 # ---------------------------------------------------------------------------
 # 5. E-outcome-fix: honest 3-state manifest `outcome` (failed>partial>ok),
