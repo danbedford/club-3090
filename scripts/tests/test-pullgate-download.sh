@@ -16,10 +16,21 @@ set -euo pipefail
 #     IS literally download_set() (nothing outside the set is fetched);
 #     deriver.sized_download_gb sizes exactly that set; gates.c2a_disk
 #     consumes the SHARED download_set() (no drift).
-#   * SHA pass: every *.safetensors x-linked-etag == sha256(file) -> ok,
-#     atomic move into the CONTRACT-2 host --model dir, .incomplete gone.
-#   * no-etag -> HARD fail (DownloadResult.failure=="no-etag"), .incomplete
-#     tree deleted, NOT skipped (the deliberate opposite of setup.sh:437).
+#   * SHA pass: every *.safetensors verified vs the HF API
+#     siblings[].lfs.sha256 (the deriver-already-fetched _hf_api payload) ==
+#     sha256(file) -> ok, atomic move into the CONTRACT-2 host --model dir,
+#     .incomplete gone. (E2-fix-2: the verify SOURCE moved off the
+#     Xet-redirect-fragile HEAD x-linked-etag onto the API lfs.sha256.)
+#   * E2-fix-2 regression: a Xet-backed repo whose redirect-following HEAD
+#     returns NO x-linked-etag (head_etag -> None) but whose API publishes
+#     siblings[].lfs.sha256 matching the file -> ok=True/sha_verified=True
+#     (this exact on-rig scenario, Qwen/Qwen2.5-0.5B-Instruct, FALSE-failed
+#     "no-etag" before the fix).
+#   * no-etag -> HARD fail (DownloadResult.failure=="no-etag") when a
+#     *.safetensors has NO retrievable API lfs.sha256 (genuinely
+#     unverifiable), .incomplete tree deleted, NOT skipped (the deliberate
+#     opposite of setup.sh:437) — CONTRACT-3 hard-fail-if-unverifiable
+#     preserved; only the hash source moved (token kept "no-etag").
 #   * sha-mismatch -> failure + .incomplete cleanup, no final dir.
 #   * gated-401 mid-fetch -> failure="gated-401" + cleanup, no partials.
 #   * E1 dtype header-probe now LIVE: a quantized repo lacking torch_dtype
@@ -207,11 +218,35 @@ def content_sha(name: str) -> str:
     return hashlib.sha256(f"CONTENT::{name}".encode()).hexdigest()
 
 
-def mk_einput(slug, hf_home):
+import copy  # noqa: E402
+
+
+def api_with_lfs(sha_for=None, drop_lfs=()):
+    """A deep copy of API where every *.safetensors sibling carries an
+    `lfs.sha256` == sha256("CONTENT::<name>") (the deterministic content the
+    FixtureFetcher writes) — i.e. the canonical per-file LFS SHA256 the
+    deriver stashes in `_hf_api`. `sha_for` overrides specific filenames'
+    lfs.sha256; `drop_lfs` removes lfs entirely for a filename (a genuinely
+    unverifiable *.safetensors -> CONTRACT-3 hard `no-etag`)."""
+    sha_for = sha_for or {}
+    a = copy.deepcopy(API)
+    for s in a["siblings"]:
+        n = s["rfilename"]
+        if not n.endswith(".safetensors"):
+            continue
+        if n in drop_lfs:
+            s.pop("lfs", None)
+            continue
+        sha = sha_for.get(n, content_sha(n))
+        s["lfs"] = {"sha256": sha, "size": s.get("size", 0)}
+    return a
+
+
+def mk_einput(slug, hf_home, api=None):
     der = SimpleNamespace(
         slug=slug,
         profile={
-            "_hf_api": API,
+            "_hf_api": api if api is not None else api_with_lfs(),
             "selected_weight_files": [
                 "model-00001-of-00002.safetensors",
                 "model-00002-of-00002.safetensors",
@@ -260,18 +295,82 @@ with tempfile.TemporaryDirectory() as td:
     check(r.bytes > 0, "SHA-pass: bytes accounted")
 
 # ---------------------------------------------------------------------------
-# 4. no-etag -> HARD fail (NOT skip), .incomplete deleted.
+# 3b. E2-fix-2 REGRESSION (the exact on-rig E5 scenario):
+#     a Xet-backed repo. The redirect-following HEAD into cas-bridge.
+#     xethub.hf.co carries a CAS-blob ETag but NO x-linked-etag, so
+#     head_etag() -> None for every *.safetensors. BEFORE the fix this
+#     false-failed failure=="no-etag" even though the canonical LFS SHA256
+#     IS published in the HF model API siblings[].lfs.sha256 (which the
+#     deriver already fetched into _hf_api). AFTER the fix: verification
+#     uses the API lfs.sha256 -> ok=True, sha_verified=True. (On-rig:
+#     `pull.sh Qwen/Qwen2.5-0.5B-Instruct` reached [E], hf-download ran,
+#     then false `no-etag`.)
 # ---------------------------------------------------------------------------
 with tempfile.TemporaryDirectory() as td:
-    ei = mk_einput("Org/NoEtag", td)
+    # API publishes the canonical lfs.sha256 (== sha256 of the fixture
+    # content) for every shard — exactly what /api/models?blobs=true does.
+    ei = mk_einput("Qwen/Qwen2.5-0.5B-Instruct", td)
+    # Xet redirect: HEAD sees NO x-linked-etag for ANY *.safetensors.
+    xet_no_etag = {
+        n: None for n in ds if n.endswith(".safetensors")
+    }
+    f = FixtureFetcher(etags=xet_no_etag)
+    r = DL.download_model(ei, fetcher=f)
+    check(r.ok is True and r.failure is None,
+          f"E2-fix-2: Xet-redirect HEAD has NO x-linked-etag yet verify "
+          f"PASSES off the API lfs.sha256 (got ok={r.ok} fail={r.failure})"
+          f" — this exact case FALSE-failed 'no-etag' before the fix")
+    check(r.sha_verified is True,
+          "E2-fix-2: sha_verified True via API lfs.sha256 (redirect-immune)")
+    # the HEAD seam WAS still consulted (gated-401 probe) — proves we did
+    # NOT just delete the HEAD call, only stopped trusting its hash value.
+    check(set(f.head_calls) == {
+              n for n in ds if n.endswith(".safetensors")},
+          "E2-fix-2: HEAD still consulted as the gated-401 probe seam "
+          f"(head_calls={sorted(f.head_calls)})")
+    final = DL.pull_dir(Path(td), "Qwen/Qwen2.5-0.5B-Instruct")
+    check(final.is_dir() and not (final / ".incomplete").exists(),
+          "E2-fix-2: atomic move + .incomplete cleanup unchanged")
+    check(all((final / n).exists() for n in ds),
+          "E2-fix-2: every download_set file promoted to the final dir")
+
+# ---------------------------------------------------------------------------
+# 3c. E2-fix-2: SHA verification is sourced from the API lfs.sha256, NOT
+#     the HEAD value — a WRONG/STALE HEAD x-linked-etag must NOT cause a
+#     false sha-mismatch when the file matches the API lfs.sha256.
+# ---------------------------------------------------------------------------
+with tempfile.TemporaryDirectory() as td:
+    ei = mk_einput("Org/StaleHeadEtag", td)
+    bogus = {n: "deadbeef" * 8 for n in ds if n.endswith(".safetensors")}
+    f = FixtureFetcher(etags=bogus)  # HEAD lies; API lfs.sha256 is truth
+    r = DL.download_model(ei, fetcher=f)
+    check(r.ok is True and r.failure is None and r.sha_verified is True,
+          f"E2-fix-2: a wrong HEAD x-linked-etag is IGNORED; verify uses "
+          f"API lfs.sha256 (got ok={r.ok} fail={r.failure})")
+
+# ---------------------------------------------------------------------------
+# 4. no-etag -> HARD fail (NOT skip), .incomplete deleted.
+#    CONTRACT-3 hard-fail-if-unverifiable PRESERVED through E2-fix-2: the
+#    trusted hash now comes from the API siblings[].lfs.sha256, so the
+#    genuinely-unverifiable case is "a *.safetensors with NO lfs.sha256 in
+#    the API payload" (NOT a blank HEAD x-linked-etag — that is now the
+#    EXPECTED Xet-redirect state, see regression case 3b). HEAD etags are
+#    fully present here to PROVE the hard fail comes from the missing API
+#    hash, not the HEAD seam. Failure token UNCHANGED ("no-etag").
+# ---------------------------------------------------------------------------
+with tempfile.TemporaryDirectory() as td:
+    # shard 2 has NO lfs.sha256 in the API -> genuinely unverifiable.
+    api_no_lfs = api_with_lfs(drop_lfs={"model-00002-of-00002.safetensors"})
+    ei = mk_einput("Org/NoEtag", td, api=api_no_lfs)
+    # every HEAD x-linked-etag present & correct: proves the hard fail is
+    # from the MISSING API lfs.sha256, not the (now-ignored) HEAD value.
     etags = {n: content_sha(n) for n in ds if n.endswith(".safetensors")}
-    # blank the etag for shard 2 -> CONTRACT-3 hard fail (opposite of setup.sh)
-    etags["model-00002-of-00002.safetensors"] = ""
     f = FixtureFetcher(etags=etags)
     r = DL.download_model(ei, fetcher=f)
     check(r.ok is False and r.failure == "no-etag",
-          f"no-etag: HARD fail failure=='no-etag' (got ok={r.ok} "
-          f"fail={r.failure}) — NOT skipped like setup.sh:437")
+          f"no-etag: HARD fail failure=='no-etag' when a *.safetensors has "
+          f"NO API lfs.sha256 (got ok={r.ok} fail={r.failure}) — NOT "
+          f"skipped like setup.sh:437; token kept across the source move")
     final = DL.pull_dir(Path(td), "Org/NoEtag")
     check(not (final / ".incomplete").exists(),
           "no-etag: .incomplete tree deleted (no corrupt residue)")
@@ -283,9 +382,11 @@ with tempfile.TemporaryDirectory() as td:
 # 5. sha-mismatch -> fail + cleanup.
 # ---------------------------------------------------------------------------
 with tempfile.TemporaryDirectory() as td:
+    # API lfs.sha256 (mk_einput default) says one thing; written bytes are
+    # different -> mismatch. HEAD etags present & correct to prove the
+    # mismatch is judged against the API hash, not the (ignored) HEAD value.
     ei = mk_einput("Org/ShaBad", td)
     etags = {n: content_sha(n) for n in ds if n.endswith(".safetensors")}
-    # the etag says one thing; the written bytes are different -> mismatch
     f = FixtureFetcher(
         etags=etags,
         bad_bytes={"model-00001-of-00002.safetensors": b"CORRUPT"},

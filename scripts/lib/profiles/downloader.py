@@ -16,7 +16,8 @@ Public API (stable for E3/E4)
     #     .ok           -> bool
     #     .files        -> list[str]   (the fetched DOWNLOAD_SET)
     #     .bytes        -> int         (Σ size of staged files)
-    #     .sha_verified -> bool        (every *.safetensors etag-verified)
+    #     .sha_verified -> bool        (every *.safetensors verified vs the
+    #                                   HF API lfs.sha256)
     #     .failure      -> None | "no-etag" | "sha-mismatch" | "gated-401"
     #                          | "disk" | "hf-cli-missing"
     #     .detail       -> str  (actionable message for "hf-cli-missing")
@@ -30,12 +31,28 @@ CONTRACT-3 invariants enforced here
   `download_set` entry (exact filenames are valid globs). The include set
   IS the literal shared `download_set` list `[C2a]` sized. A test asserts
   fetched-set == sized-set (nothing extra).
-* SHA: every `*.safetensors` — HF HEAD -> `x-linked-etag` -> SHA256(file)
-  == etag. **UNLIKE `setup.sh:434/437` (prints SKIP, does NOT count a
-  failure on missing etag), a missing/empty `x-linked-etag` is a HARD E2
-  failure** (`failure="no-etag"`). Never silently trust an unverifiable
-  multi-GB weight. SHA mismatch -> `failure="sha-mismatch"`. Metadata
-  files: presence + size only.
+* SHA: every `*.safetensors` — verified against the **HF model API
+  `siblings[].lfs.sha256`** (the canonical per-file LFS SHA256), keyed by
+  filename, sourced from the SAME `/api/models/<repo>?blobs=true` payload
+  the deriver already fetched and stashed at `der.profile["_hf_api"]`
+  (CONTRACT-3 additive surface). SHA256(file) == that lfs.sha256.
+  **UNLIKE `setup.sh:434/437` (prints SKIP, does NOT count a failure on a
+  missing hash), a *.safetensors with NO retrievable `lfs.sha256` is a
+  HARD E2 failure** (`failure="no-etag"`). Never silently trust an
+  unverifiable multi-GB weight. SHA mismatch -> `failure="sha-mismatch"`.
+  Metadata files: presence + size only.
+
+  NOTE — the verify SOURCE moved (E2-fix-2, on-rig E5): the prior path was
+  a per-file HF HEAD -> `x-linked-etag`. On Xet-backed repos the
+  `huggingface.co` resolve hop 302-redirects into `cas-bridge.xethub.hf.co`
+  (Xet CAS); the post-redirect CAS response carries a CAS-blob `ETag` but
+  NO `x-linked-etag`, so a redirect-following HEAD sees no `x-linked-etag`
+  -> a FALSE `no-etag` (an on-rig run of
+  `Qwen/Qwen2.5-0.5B-Instruct` hit exactly this). The canonical LFS
+  SHA256 is instead read from the model API `siblings[].lfs.sha256` the
+  deriver ALREADY retrieves — redirect-immune, single source. ONLY the
+  hash source changed; the hard-fail-if-unverifiable CONTRACT-3 decision,
+  the failure token, and every other invariant are byte-unchanged.
 * Atomic staging: download into
   `<hf_home>/club3090/pulls/<slug-sanitized>/.incomplete/`; on full success
   + all SHA verified, atomically move into
@@ -138,7 +155,13 @@ def incomplete_dir(hf_home: Path, slug: str) -> Path:
 #       fetch EXACTLY allow_patterns into local_dir; return the relative
 #       filenames actually written.
 #   .head_etag(repo_id, filename)                  -> str | None
-#       HF HEAD -> the `x-linked-etag` (the LFS SHA256) or None/"" if absent.
+#       HF HEAD -> a value, OR the "__gated-401__" sentinel on 401/403, OR
+#       None. E2-fix-2: this is now ONLY the gated-401 probe seam — its
+#       returned hash is NO LONGER the SHA verification source (that moved
+#       to the redirect-immune HF API `siblings[].lfs.sha256` the deriver
+#       already fetched; a redirect-following HEAD into Xet CAS has no
+#       `x-linked-etag` and used to false-`no-etag`). A None/empty HEAD
+#       value is no longer a failure by itself.
 # Tests inject a recorded-fixture fetcher (no network / no subprocess). The
 # real fetcher is below; it shells out to the `hf` CLI (NOT the
 # huggingface_hub Python library — that import is unavailable in the bare
@@ -173,9 +196,13 @@ class HubFetcher:
     `pull.sh` runs; on-rig E5 caught the prior lib-import as
     ModuleNotFoundError). One `--include` per `download_set` entry so the
     fetched set is EXACTLY the allowlist (CONTRACT-3 / Codex-r7 High-1).
-    `head_etag` reads HF's `x-linked-etag` (the canonical LFS SHA256) via a
-    cheap HEAD — the SAME pattern as `setup.sh:434`; the no-etag DECISION
-    (hard fail vs skip) lives in `download_model`, NOT here."""
+    `head_etag` does a cheap HEAD and surfaces `__gated-401__` on 401/403
+    (the gated-probe seam). E2-fix-2: SHA verification NO LONGER uses this
+    HEAD value — the trusted hash is the redirect-immune HF API
+    `siblings[].lfs.sha256` the deriver already fetched (a redirect-
+    following HEAD into Xet CAS carries no `x-linked-etag` and false-
+    `no-etag`'d on-rig). The no-etag DECISION (hard fail vs skip) and the
+    hash SOURCE both live in `download_model`, NOT here."""
 
     timeout = _NET_TIMEOUT
 
@@ -313,6 +340,34 @@ def _selected_files_api(einput) -> dict:
     return prof.get("_hf_api") or {}
 
 
+def _lfs_sha_map(api: dict) -> dict:
+    """`{rfilename: lfs.sha256}` from the HF model API payload.
+
+    This is the canonical per-file LFS SHA256 — the SAME hash the
+    `huggingface.co/<repo>/resolve/main/<file>` hop exposes as
+    `x-linked-etag`, but read here from the model-API
+    `siblings[].lfs.sha256` the deriver ALREADY fetched (it is in the same
+    `?blobs=true` payload `_selected_files_api()` returns / the deriver used
+    for `download_set()`/sizing). It is redirect-immune: it does NOT depend
+    on following the `huggingface.co` resolve hop into Xet CAS
+    (`cas-bridge.xethub.hf.co`), where the post-redirect response carries a
+    CAS-blob `ETag` and NO `x-linked-etag` — the on-rig E5 false-`no-etag`
+    this fix closes. Only siblings that publish an `lfs.sha256` are mapped;
+    a `*.safetensors` absent from this map is genuinely unverifiable and
+    stays a CONTRACT-3 HARD fail (`failure="no-etag"`)."""
+    out: dict[str, str] = {}
+    for s in (api or {}).get("siblings", []) or []:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("rfilename")
+        lfs = s.get("lfs")
+        if name and isinstance(lfs, dict):
+            sha = lfs.get("sha256")
+            if isinstance(sha, str) and sha.strip():
+                out[name] = sha.strip().strip('"')
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Fetcher-side structured signals (a fixture/real fetcher raises these to
 # tell the stage WHY a fetch failed; download_model maps them to the
@@ -338,10 +393,13 @@ def download_model(einput, *, fetcher: Optional[Any] = None) -> DownloadResult:
 
     CONTRACT-3 failure semantics (each deletes the `.incomplete` tree — no
     corrupt residue):
-      * missing/empty `x-linked-etag`  -> failure="no-etag"  (HARD fail —
-        UNLIKE setup.sh which would SKIP; we never trust an unverifiable
-        multi-GB weight)
-      * SHA(file) != etag              -> failure="sha-mismatch"
+      * no API `lfs.sha256` for a       -> failure="no-etag"  (HARD fail —
+        *.safetensors (genuinely             UNLIKE setup.sh which would
+        unverifiable)                        SKIP; we never trust an
+                                             unverifiable multi-GB weight.
+                                             Source moved HEAD x-linked-etag
+                                             -> API lfs.sha256; token kept)
+      * SHA(file) != API lfs.sha256    -> failure="sha-mismatch"
       * HF gated 401/403 on fetch/HEAD -> failure="gated-401"
       * staging-disk failure           -> failure="disk"
       * neither `hf` nor `huggingface-cli` resolvable
@@ -402,34 +460,55 @@ def download_model(einput, *, fetcher: Optional[Any] = None) -> DownloadResult:
 
     written_set = sorted(set(written))
 
-    # --- SHA: every *.safetensors via HF x-linked-etag --------------------
+    # --- SHA: every *.safetensors via the HF API lfs.sha256 ---------------
+    # E2-fix-2 (on-rig E5): the trusted hash now comes from the HF model API
+    # `siblings[].lfs.sha256` the deriver ALREADY fetched (`_hf_api`), NOT a
+    # per-file HEAD `x-linked-etag`. On Xet-backed repos the resolve hop
+    # 302-redirects into `cas-bridge.xethub.hf.co`; the post-redirect CAS
+    # response has a CAS-blob `ETag` but NO `x-linked-etag`, so a redirect-
+    # following HEAD saw nothing -> a FALSE `no-etag`
+    # (Qwen/Qwen2.5-0.5B-Instruct reproduced this on-rig). The API
+    # lfs.sha256 is the SAME canonical LFS SHA256 (== the `x-linked-etag`
+    # value on the non-redirected resolve hop), redirect-immune, single
+    # source. The HEAD seam is retained ONLY as the gated-401 probe (the
+    # injectable-fetcher contract + existing tests) — its returned hash is
+    # NO LONGER the verification source and a missing/empty HEAD value is no
+    # longer a failure by itself: verifiability is decided by the API hash.
     sha_ok = True
+    lfs_sha = _lfs_sha_map(api)
     safetensors = [n for n in written_set if n.endswith(".safetensors")]
     for name in safetensors:
+        # HEAD retained ONLY to surface HF gated-401 mid-verify (the
+        # injectable-fetcher seam; its hash value is intentionally ignored).
         try:
-            etag = fetcher.head_etag(slug, name)
+            head = fetcher.head_etag(slug, name)
         except GatedError:
             _rmtree(staging)
             return DownloadResult(
                 ok=False, failure="gated-401", local_dir=str(staging),
                 files=written_set,
             )
-        if etag == "__gated-401__":
+        if head == "__gated-401__":
             _rmtree(staging)
             return DownloadResult(
                 ok=False, failure="gated-401", local_dir=str(staging),
                 files=written_set,
             )
-        # CONTRACT-3 / Codex-r6 High-1: missing/empty etag is a HARD fail.
-        # This is the DELIBERATE opposite of setup.sh:437 ("SKIP (no etag)").
-        if not etag:
+        # The trusted hash is the API lfs.sha256, keyed by filename.
+        expected = lfs_sha.get(name)
+        # CONTRACT-3 / Codex-r6 High-1: a *.safetensors with NO retrievable
+        # lfs.sha256 from the API is genuinely unverifiable -> a HARD fail.
+        # This is the DELIBERATE opposite of setup.sh:437 ("SKIP (no
+        # etag)"); the failure token is UNCHANGED ("no-etag") — only the
+        # hash source moved (redirect-fragile HEAD -> API lfs.sha256).
+        if not expected:
             _rmtree(staging)
             return DownloadResult(
                 ok=False, failure="no-etag", local_dir=str(staging),
                 files=written_set,
             )
         actual = _sha256_file(staging / name)
-        if actual.lower() != str(etag).lower():
+        if actual.lower() != str(expected).lower():
             _rmtree(staging)
             return DownloadResult(
                 ok=False, failure="sha-mismatch", local_dir=str(staging),
