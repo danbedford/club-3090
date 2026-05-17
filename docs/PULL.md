@@ -15,6 +15,34 @@ of the same pipeline (gate strata, classifier, trust pipeline) start at
 
 ---
 
+## Quickstart
+
+One command. Replace the slug with your model; `--profile-like` borrows a
+curated runtime shape (a `COMPOSE_REGISTRY` key like `vllm/minimal` —
+see [Usage](#usage) below for what the keys mean).
+
+```bash
+# Just check — never downloads, never boots:
+scripts/pull.sh <org/Model> --profile-like vllm/minimal --dry-run
+
+# Evaluate, then (if it passes) download + emit a compose + boot it:
+scripts/pull.sh <org/Model> --profile-like vllm/minimal --yes
+```
+
+What you'll see — exactly one of:
+
+| Outcome | Exit | Means |
+|---|---|---|
+| `proceed` / `confirm→proceed` | `0` / `3` | Fits. `0` = clean; `3` = re-run with the named flag (e.g. `--yes`) to continue. |
+| `hard-block` | `2` | Honest stop with a precise reason (unsupported engine/arch, won't-fit, disk, needs `--trust-remote-code`). Nothing downloaded. |
+| `override-accepted` | `0` | You explicitly accepted a non-pass path (e.g. `--force-download`); proceeds with the caveat recorded. |
+
+It is **honest about confidence and never silently passes.** A "fits"
+verdict is a *boot-time* check — read [Boot-fit ≠ runtime-stability](#boot-fit--runtime-stability--read-this)
+before relying on it for sustained agent workloads. Full detail below.
+
+---
+
 ## What changed in v0.8.0
 
 Older releases worked one way: the repo *formally supported* a fixed list

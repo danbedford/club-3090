@@ -29,7 +29,7 @@ pull → derive (read repo config/safetensors)
                 calibration backbone)
 ```
 
-User-facing entry doc: [`docs/PULL.md`](PULL.md). Contributor depth, in pipeline order: [`COMPOSE_GENERATOR.md`](COMPOSE_GENERATOR.md) (emit) → [`PULL_GATE.md`](PULL_GATE.md) (gate) → [`PULL_EMIT_DERIVED.md`](PULL_EMIT_DERIVED.md) (boot+capture) → [`LOOP.md`](LOOP.md) (classify+trust+dedup). The curated path still works exactly as before — `pull` is additive, the front door for anything not in the catalog.
+**You don't need to know any of these stage names to use it** — you run one command (`scripts/pull.sh`); the `[C0]`/`[B]`/`[C1]`/… taxonomy above is internal flow for contributors. Start at the user guide: [`docs/PULL.md`](PULL.md) (Quickstart at the top). Contributor depth, in pipeline order: [`COMPOSE_GENERATOR.md`](COMPOSE_GENERATOR.md) (emit) → [`PULL_GATE.md`](PULL_GATE.md) (gate) → [`PULL_EMIT_DERIVED.md`](PULL_EMIT_DERIVED.md) (boot+capture) → [`LOOP.md`](LOOP.md) (classify+trust+dedup). The curated path still works exactly as before — `pull` is additive, the front door for anything not in the catalog.
 
 A boot-fit pass is a *static* check. It is necessary-not-sufficient: a `fits-clean` config can still degrade under accumulated-context agent workloads (the Cliff 2 / prefill-cliff failure modes — see [`CLIFFS.md`](CLIFFS.md)). The gate verdict says so explicitly and points at soak-continuous validation; trust the caveat, not just the green.
 
