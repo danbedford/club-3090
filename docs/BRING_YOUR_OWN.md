@@ -310,7 +310,9 @@ ones** — the layer decides where the *files* go, not what the slug is *called*
 provenance lives in the entry's `origin` field rather than in the name. That is what
 lets you name the engine you actually run (`my-llamacpp/my-model`, not just ours),
 and it means publishing later flips a field instead of renaming a slug your scripts
-and notes already point at. A local slug whose name collides with a shipped one is
+and notes already point at. On an engine the catalog already uses, `register` takes
+the catalog's prefix and directory for it (`vllm-stable` → `vllm/<model>`, filed under
+`vllm/`), so the slug exports under the name it has. A local slug whose name collides with a shipped one is
 **shadowed** — the curated row wins the lookup and yours is marked, not deleted.
 
 > ⚠️ The old `local/<name>` namespace was removed (#1202). A `local/…` slug is now

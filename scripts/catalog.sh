@@ -387,9 +387,26 @@ fmt = "gguf" if (f.model_path or "").endswith(".gguf") else "safetensors"
 # Writing ".../compose/local/base.yml" made "local" render as the topology.
 _tp = int(f.tp or 1)
 _topo = "single" if _tp <= 1 else ("dual" if _tp == 2 else f"multi{_tp}")
-cpath = (f"scripts/lib/profiles-local/composes/{mid}/{engine}"
+# Where core keeps this engine's composes, and the slug prefix it uses there
+# (core_layout.py, shared with export_pr.py), so a slug registered here exports
+# under the name it already has. `vllm-stable` slugs are `vllm/…`, filed under
+# `vllm/`; an engine core doesn't have keeps its id for both. This named every
+# slug after the engine ID, and export_pr.py refuses `vllm-stable/…`.
+sys.path.insert(0, str(Path(wroot, "scripts/lib/profiles")))
+import core_layout
+from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY as _CORE_REG
+_by_engine, _ = core_layout.engine_layout(_CORE_REG)
+_pair, _pairs = core_layout.pick_pair(_by_engine, engine, f.engine or "")
+if _pairs and _pair is None:
+    print(f"[catalog] core keeps {engine} composes in "
+          f"{', '.join(d + '/' for d, _ in _pairs)}, and this compose reads as "
+          f"{f.engine!r}, which picks none of them.", file=sys.stderr)
+    raise SystemExit(2)
+_edir, _eprefix = _pair if _pair else (engine, engine)
+
+cpath = (f"scripts/lib/profiles-local/composes/{mid}/{_edir}"
          f"/compose/{_topo}/{fmt}/base.yml")
-slug = slug_in or f"{engine}/{mid}"
+slug = slug_in or f"{_eprefix}/{mid}"
 
 
 # Weights FACTS, not placeholders. size_gb was hardcoded 1.0 and hf_repo "",
@@ -491,7 +508,7 @@ spec = {
     "weights": {"local": {"path": _rel_path, "local_subdir": _rel_subdir,
                           "size_gb": _size_gb,
                           "format": fmt, "status": "incubating", "hf_repo": _hf_repo,
-                          "engine": engine, "kind": "main",
+                          "engine": _edir, "kind": "main",
                           "verify_glob": "*.gguf" if fmt == "gguf" else "*.safetensors"}},
     "arch": arch,
     "default_weight_variant": "local",
@@ -511,9 +528,6 @@ spec = {
 variant, reuse, export_notes = "local", "", []
 if attach:
     import yaml as _yaml
-    sys.path.insert(0, str(Path(wroot, "scripts/lib/profiles")))
-    import core_layout
-    from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY as _CORE_REG
     _core = _yaml.safe_load((_core_models / f"{mid}.yml").read_text(encoding="utf-8")) or {}
     _core_w = _core.get("weights") or {}
     _ext_p = Path(wroot, "scripts/lib/profiles-local/extends.d", f"{mid}.yml")
@@ -555,16 +569,6 @@ if attach:
                                     f"it to extends.d/{mid}.yml")
             export_notes.append(f"weights.{variant} has no files: list: add the globs "
                                 f"setup.sh should fetch to extends.d/{mid}.yml")
-    # Where core keeps this engine's composes, and the slug prefix it uses there
-    # (core_layout.py, shared with export_pr.py), so the slug exports as named.
-    _by_engine, _ = core_layout.engine_layout(_CORE_REG)
-    _pair, _pairs = core_layout.pick_pair(_by_engine, engine, f.engine or "")
-    if _pairs and _pair is None:
-        print(f"[catalog] core keeps {engine} composes in "
-              f"{', '.join(d + '/' for d, _ in _pairs)}, and this compose reads as "
-              f"{f.engine!r}, which picks none of them.", file=sys.stderr)
-        raise SystemExit(2)
-    _edir, _eprefix = _pair if _pair else (engine, engine)
     # A weights variant names its engine DIRECTORY (`vllm`, `llama-cpp`), as every
     # curated profile does (ADDING_MODELS, case 2) — not the engine id.
     for _m in _attach_w.values():
