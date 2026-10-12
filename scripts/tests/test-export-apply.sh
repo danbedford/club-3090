@@ -129,8 +129,8 @@ out="$(apply_ "$T/models")"; code=$?
   && ok "a subdirectory of a checkout is refused" || fail "subdir (rc=$code): $out"
 echo "# local edit" >> "$T/README.md"
 out="$(apply_ "$T")"; code=$?
-[[ $code -eq 3 && "$out" == *"uncommitted changes"* && "$out" == *"README.md"* ]] \
-  && ok "uncommitted changes are refused, named" || fail "dirty (rc=$code): $out"
+[[ $code -eq 3 && "$out" == *"uncommitted changes"* && "$out" == *"README.md"* && ! -e "$TMP/out-t-refuse" ]] \
+  && ok "uncommitted changes are refused, named, and no bundle is written" || fail "dirty (rc=$code): $out"
 git -C "$T" checkout -q -- README.md
 mkdir -p "$(dirname "$T/$COMPOSE")"; echo "x: 1" > "$T/$COMPOSE"
 out="$(apply_ "$T")"; code=$?

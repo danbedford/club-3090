@@ -1250,10 +1250,28 @@ def _write_text_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def _still_to_do(body: str) -> list[str]:
+    """The PR body's "Still to do in this PR" checklist (engine image arms,
+    cache fallbacks), so --apply can print it where the maintainer is looking."""
+    lines = body.splitlines()
+    try:
+        i = next(n for n, ln in enumerate(lines) if ln.startswith("**Still to do in this PR:**"))
+    except StopIteration:
+        return []
+    out = []
+    for ln in lines[i + 1:]:
+        if ln.startswith("- "):
+            out.append(ln)
+        elif out and not ln.strip():
+            break
+    return out
+
+
 def apply_bundle(root: Path, target: Path, files: dict[str, Any], states: list[dict],
-                 *, dry_run: bool) -> int:
-    """Write the bundle into ``target``. Refusals (exit 3) come before any write;
-    a failed check after the write puts the target back and exits 2."""
+                 *, out: Path, dry_run: bool) -> int:
+    """Write the bundle to ``out`` and into ``target``. Refusals (exit 3) come
+    before anything is written, the bundle included; a failed check after the
+    write puts the target back and exits 2."""
     yaml = _yaml()
     if target == root:
         raise Refusal(
@@ -1328,6 +1346,7 @@ def apply_bundle(root: Path, target: Path, files: dict[str, Any], states: list[d
         _info("dry-run — nothing written.")
         return 0
 
+    write_bundle(out, files)              # PR_BODY.md for the PR, and a record of what went in
     baseline = guard_results(target)
     snapshot = {p: p.read_bytes() for p in [*modified, target / _REGISTRY_YAML_REL]}
     created: list[Path] = []
@@ -1402,6 +1421,11 @@ def apply_bundle(root: Path, target: Path, files: dict[str, Any], states: list[d
           "supported_model_families and the hardware profiles' supported_kv_formats must "
           "name the new combinations), diagnose-profile.sh <slug>, a boot through "
           "switch.sh + verify-full, then the full suite — this is a catalog-shape change.")
+    todo = _still_to_do(files.get("PR_BODY.md") or "")
+    if todo:
+        _info("and from the PR body's checklist:")
+        for ln in todo:
+            _info(f"  {ln}")
     if red:
         _info(f"red above: {', '.join(red)} — fix in the target before the PR.")
     print(f"APPLY_OK {target}")
@@ -1525,8 +1549,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                         f"--apply writes a checkout's curated catalog, so it is maintainer-gated: "
                         f"set {_CORE_GATE_ENV}=1 (export it, or `bash scripts/settings.sh set "
                         f"{_CORE_GATE_ENV}=1`). --dry-run shows the plan without it.")
-                write_bundle(out, files)
-            code = apply_bundle(root, into, files, states, dry_run=args.dry_run)
+            code = apply_bundle(root, into, files, states, out=out, dry_run=args.dry_run)
         except Refusal as exc:
             print(f"[export-pr] REFUSED: {exc}", file=sys.stderr)
             return EXIT_COLLISION
