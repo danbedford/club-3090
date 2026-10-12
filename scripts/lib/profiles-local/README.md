@@ -20,6 +20,10 @@ scripts/lib/profiles-local/
 │                        `catalog.sh unregister-engine` removes one no slug runs on)
 ├── composes/<id>/...    your compose files (same profile-schema layout as models/<id>/)
 └── registry.local.json  registry entries: { "<slug>": { …_entry kwargs… } }
+
+Editing them later: `catalog.sh update --slug S --set K=V` (a slug's entry),
+`catalog.sh update-weights --model M --variant V --set K=V` (a weights variant in
+models.d/ or extends.d/), `catalog.sh update-engine --id ID --add/--set …` (an engine)
 ```
 
 ## The easy way: c3 → ⑤ Promote

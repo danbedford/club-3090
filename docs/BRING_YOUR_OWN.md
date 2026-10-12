@@ -305,6 +305,10 @@ bash scripts/catalog.sh register-engine --id vllm-myfork --type vllm \
   - Without `--kv-formats`, `--families` or `--weight-formats`, `diagnose-profile` reports
     those checks failing for every slug on the engine.
   - Without the lineage flags, the engine registers but can't be exported for a PR yet.
+- **Later changes:** `catalog.sh update-engine --id <id>` widens or narrows the lists once
+  you've measured (`--add kv_formats=bf16`, `--remove …`), and sets lineage, the image or
+  the display name (`--set relation=fork`, `--set image=…`). It validates the same way,
+  refuses a curated engine, and puts the file back if the profiles stop loading.
 - `unregister` keeps an engine registered this way when its last slug goes. Remove it
   with `catalog.sh unregister-engine --id <id>`, which refuses while any local slug
   still runs on it and names the `unregister` commands for those slugs.
@@ -572,7 +576,8 @@ bash scripts/catalog.sh register --compose ./my.yml --engine vllm-stable \
   put back.
 - `--dry-run` shows the plan. `unregister` removes the slug and keeps the extension.
 - **It prints what `export_pr.py` will still need:**
-  - `files:` for a new variant, and its `hf_repo`;
+  - `files:` for a new variant, and its `hf_repo`, set with `catalog.sh update-weights --model <id>
+    --variant <variant> --set "files=*.safetensors,*.json" --set hf_repo=<org/repo>`;
   - a `kvcalc_key` on a vLLM-type engine, set with `catalog.sh update --slug <slug> --set kvcalc_key=<id>:<profile>`.
 
 The file format, for editing it by hand: [profiles-local

@@ -25,6 +25,11 @@
 #                         [--dry-run] [-y]      an engine on its own, before its slugs
 #   catalog.sh unregister-engine --id ID [--dry-run] [-y]
 #                         a local engine no local slug runs on
+#   catalog.sh update-weights --model M --variant V --set K=V [--dry-run] [-y]
+#                         a weights variant in models.d/ or extends.d/ (files:, hf_repo, …)
+#   catalog.sh update-engine --id ID [--set K=V] [--add K=a,b] [--remove K=a,b]
+#                         a local engine: KV formats, families, lineage, image, …
+#   (`KEY=` with no value removes the key; every command writes only the local layer)
 #
 #   --root <dir>  operate on a throwaway tree instead of this checkout (tests).
 #
@@ -40,7 +45,7 @@ ROOT="$PWD"
 die() { printf '[catalog] %s\n' "$*" >&2; exit 2; }
 
 usage() {
-  sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -54,6 +59,12 @@ if [[ "$SUB" == "register-engine" ]]; then
 fi
 if [[ "$SUB" == "unregister-engine" ]]; then
   exec python3 scripts/lib/profiles/unregister_engine.py "$@"
+fi
+if [[ "$SUB" == "update-weights" ]]; then
+  exec python3 scripts/lib/profiles/catalog_update.py weights "$@"
+fi
+if [[ "$SUB" == "update-engine" ]]; then
+  exec python3 scripts/lib/profiles/catalog_update.py engine "$@"
 fi
 
 COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" HFREPO="" ETYPE="" MINSM="" TO="" WVARIANT=""; declare -a SETS=()
@@ -596,11 +607,11 @@ if attach:
             _meta["hf_repo"] = _hf_repo
         _attach_w = {variant: _meta}
         if reuse == "new":
+            _uw = f"catalog.sh update-weights --model {mid} --variant {variant}"
             if not _hf_repo:
-                export_notes.append(f"weights.{variant} has no hf_repo: pass --hf-repo, or add "
-                                    f"it to extends.d/{mid}.yml")
-            export_notes.append(f"weights.{variant} has no files: list: add the globs "
-                                f"setup.sh should fetch to extends.d/{mid}.yml")
+                export_notes.append(f"weights.{variant} has no hf_repo: {_uw} --set hf_repo=<org/repo>")
+            export_notes.append(f"weights.{variant} has no files: list (the globs setup.sh "
+                                f"fetches): {_uw} --set files=<glob,glob>")
     # A weights variant names its engine DIRECTORY (`vllm`, `llama-cpp`), as every
     # curated profile does (ADDING_MODELS, case 2) — not the engine id.
     for _m in _attach_w.values():
@@ -693,5 +704,5 @@ PY
     ;;
 
   -h|--help) usage 0 ;;
-  *) die "unknown subcommand: $SUB (expected register | register-engine | unregister | unregister-engine | rename | update)" ;;
+  *) die "unknown subcommand: $SUB (expected register | register-engine | unregister | unregister-engine | rename | update | update-weights | update-engine)" ;;
 esac

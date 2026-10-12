@@ -226,7 +226,8 @@ def build(root: Path, args) -> tuple[str, dict, list[str]]:
                               ("--weight-formats", wfmts, "C14")):
         if not vals:
             notes.append(f"no {flag}: diagnose-profile and preflight will fail {check} for every "
-                         f"slug on this engine until the profile lists them")
+                         f"slug on this engine until the profile lists them (catalog.sh "
+                         f"update-engine --id {eid} --add {flag[2:].replace('-', '_')}=…)")
 
     lineage = None
     lin_args = {"relation": args.relation, "base": args.base, "base_version": args.base_version,
@@ -234,9 +235,10 @@ def build(root: Path, args) -> tuple[str, dict, list[str]]:
     if any(lin_args.values()):
         lineage = {k: v for k, v in lin_args.items() if v}
     else:
-        notes.append("no lineage: fine locally, but export_pr.py needs --relation, --base, "
-                     "--base-version, --source and --source-ref (docs/ADDING_ENGINES.md → "
-                     "CONTRACT — engine lineage)")
+        notes.append("no lineage: fine locally, but export_pr.py needs relation, base, "
+                     "base_version, source and source_ref (docs/ADDING_ENGINES.md → CONTRACT — "
+                     f"engine lineage); add them later with catalog.sh update-engine --id {eid} "
+                     "--set relation=…")
 
     text = render_engine_yaml(
         eid=eid, display_name=args.display_name or f"{eid} (local)", etype=etype,
