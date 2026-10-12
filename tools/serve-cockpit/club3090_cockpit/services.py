@@ -5424,12 +5424,14 @@ class CockpitData:
         )
 
     def export_pr_plan(self, spec: dict, *, out_dir: Optional[str] = None) -> ActionPlan:
-        """Build the GATED ActionPlan for ``export_pr.py`` — translate an
-        already-promoted LOCAL-layer model into the three ready-to-commit CORE
-        artifacts (models/<id>.yml · core-layout compose tree · the registry
-        ENTRY FILE ``registry-entry.yaml`` + canonical merge command), written
-        ONLY under ``out_dir`` (default /tmp).  LOCAL-layer models only: a CORE
-        model already IS core content.  The spec rides in the child env as
+        """Build the GATED ActionPlan for ``export_pr.py``: the ready-to-commit
+        CORE PR bundle for what the local layer holds under ``model_id`` — a new
+        model's ``models/<id>.yml``, or for slugs attached to a curated model
+        (extends.d) a weights snippet instead; the core-layout compose tree; the
+        registry ENTRY FILE ``registry-entry.yaml`` with its merge command; and a
+        filled ``PR_BODY.md``. Written ONLY under ``out_dir`` (default /tmp).
+        An engine export (``{"engine_id": …}``) is CLI-only for now
+        (docs/BRING_YOUR_OWN.md §5). The spec rides in the child env as
         ``C3_EXPORT_SPEC`` (merged over os.environ by execute_action); the plan
         claims no GPU and NEVER auto-fires."""
         mid = (spec or {}).get("model_id", "?")
