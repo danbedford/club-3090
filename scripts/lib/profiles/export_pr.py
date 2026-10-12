@@ -840,6 +840,17 @@ def _insert_before(text: str, heading: str, block: str, template: str) -> str:
     return text[:idx + 1] + block.rstrip() + "\n\n" + text[idx + 1:]
 
 
+def _put_export_check(text: str, block: str, template: str) -> str:
+    """The template's own `## Export check` section, replaced by the export's;
+    a template without one gets it before Evidence."""
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.strip() == "## Export check"), None)
+    if start is None:
+        return _insert_before(text, "## Evidence", block, template)
+    end = next((j for j in range(start + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+    return "\n".join(lines[:start] + block.rstrip().splitlines() + [""] + lines[end:]) + "\n"
+
+
 def _compose_status(root: Path, entry: dict) -> str:
     """The registry status, and the compose header's Status line beside it, so a
     disagreement (test-compose-status-drift fails on one) shows in the PR."""
@@ -925,7 +936,7 @@ def slug_pr_body(root: Path, reg_mod, states: list[dict], translated: list[dict]
         text = _drop_section(text, "## Case 2:")
     if 3 not in present:
         text = _drop_section(text, "## Case 3:")
-    return _insert_before(text, "## Evidence", _export_check_block(findings, network, extra), name)
+    return _put_export_check(text, _export_check_block(findings, network, extra), name)
 
 
 def engine_pr_body(root: Path, eng: dict, translated: list[dict], findings: dict,
@@ -948,7 +959,7 @@ def engine_pr_body(root: Path, eng: dict, translated: list[dict], findings: dict
         first += (" (left out, on models the catalog doesn't have yet: "
                   + ", ".join(f"`{s}`" for s in eng["left_out"]) + "; they follow in a model PR)")
     text = _fill(text, "- **First slugs:**", first, name)
-    return _insert_before(text, "## Evidence", _export_check_block(findings, network, extra), name)
+    return _put_export_check(text, _export_check_block(findings, network, extra), name)
 
 
 # ── plan + write ────────────────────────────────────────────────────────────

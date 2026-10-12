@@ -625,7 +625,8 @@ def _assert_clean_body(body: str, root: Path, out: Path):
         assert leak not in body, leak
     for attribution in ("Co-Authored-By", "Claude", "Generated with"):
         assert attribution not in body, attribution
-    assert "## Export check" in body
+    assert body.count("## Export check") == 1   # the template's section, filled, not a second one
+    assert "fills this section" not in body      # its placeholder comment was replaced
     assert "<prefix>/<name>" not in body and "<model id>" not in body
 
 
@@ -906,6 +907,19 @@ class TestPrBody:
         assert f"- **Model:** `{MID}`" in body
         assert "Network rules not run" in body and "export again with `--network`" in body
         _assert_clean_body(body, root, out)
+
+    def test_template_without_an_export_check_section_gets_one_before_evidence(self, root, tmp_path):
+        _seed_local(root)
+        tpl = root / ".github/PULL_REQUEST_TEMPLATE/slug.md"
+        text = tpl.read_text(encoding="utf-8")
+        start, end = text.index("## Export check"), text.index("## Evidence")
+        tpl.write_text(text[:start] + text[end:], encoding="utf-8")
+        out = tmp_path / "bundle"
+        res = _run_cli(root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        body = (out / "PR_BODY.md").read_text(encoding="utf-8")
+        assert body.count("## Export check") == 1
+        assert body.index("## Export check") < body.index("## Evidence")
 
     def test_template_drift_fails_loudly(self, root, tmp_path):
         _seed_local(root)

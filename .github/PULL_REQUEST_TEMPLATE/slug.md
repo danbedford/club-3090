@@ -25,6 +25,7 @@ Tick what applies, delete the sections that don't, and explain any N/A.
 - [ ] `weights:` entry (plus companions) for anything new
 - [ ] Registry entry; `default_port` equals the compose's `${PORT:-NNNN}`; no `gateway` or `DEFAULTS` change unless that's the point of the PR
 - [ ] `bash scripts/preflight-add-model.sh <slug>` green
+- [ ] The catalog rules pass, network checks included: `python3 scripts/lib/profiles/catalog_rules.py --slug <slug> --network --strict`, output under **Export check**
 - [ ] Users can set it up: `bash scripts/setup.sh <slug>` downloads the weights and every companion from Hugging Face on a machine that doesn't have them, and the engine image pulls without credentials (`DOCKER_CONFIG=$(mktemp -d) docker buildx imagetools inspect <image>`). A gated repo is named as such, with its license, in the status note
 - [ ] CPU-offload (moe-cache) slug: gates M1–M11 in ADDING_MODELS.md, with the pool census in the status note
 
@@ -47,6 +48,11 @@ Tick what applies, delete the sections that don't, and explain any N/A.
 - [ ] `CLUB3090_CHECK_HF_REPOS=1 bash scripts/tests/test-hf-repos-resolve.sh` passes
 - [ ] Starts at 🐣 Incubating; `models/<id>/CHANGELOG.md` created; a BENCHMARKS section
 - [ ] One model in this PR
+
+## Export check
+
+<!-- From your local layer, `export_pr.py --network` fills this section (docs/BRING_YOUR_OWN.md §5).
+Otherwise paste `python3 scripts/lib/profiles/catalog_rules.py --slug <slug> --network` for each slug. -->
 
 ## Evidence
 

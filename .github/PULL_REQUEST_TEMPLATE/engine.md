@@ -17,6 +17,7 @@ Tick what applies, and explain N/A where it doesn't.
 - [ ] Engine profile, with every field its slugs need (KV formats, `spec_method`s, weight formats, model families) and `lineage:`
 - [ ] Naming: engine id, slug prefix, compose directory, container name and internal port follow "CONTRACT — naming"
 - [ ] The image pulls without credentials: `DOCKER_CONFIG=$(mktemp -d) docker buildx imagetools inspect <spec>`
+- [ ] The catalog rules pass, network checks included: `python3 scripts/lib/profiles/catalog_rules.py --engine <id> --network --strict`, and `--slug <slug>` for each first slug; output under **Export check**
 - [ ] `image_env` set, and allowlisted in **both** launchers (`export_variant_engine_pin` in `switch.sh` and `launch.sh`)
 - [ ] Hardware profiles' `supported_kv_formats`; for `type: vllm`, the kv-calc tables; `test-profiles-compat` engine count bumped
 - [ ] Patches we carry are in `patches.yml` with their upstream status ([PATCH_POLICY.md](https://github.com/noonghunna/club-3090/blob/master/docs/PATCH_POLICY.md))
@@ -34,6 +35,11 @@ Tick what applies, and explain N/A where it doesn't.
 
 - [ ] The conventions in "CONTRACT — composes on a new engine", including the ones no guard checks under a new engine directory: restart knob, cache mounts with the `user:` GID line and `umask 0002`, GPU selection
 - [ ] Registry entries for the first slugs ([ADDING_MODELS.md](https://github.com/noonghunna/club-3090/blob/master/docs/ADDING_MODELS.md)); `bash scripts/preflight-add-model.sh <slug>` green for each
+
+## Export check
+
+<!-- From your local layer, `export_pr.py --network` with `{"engine_id": "<id>"}` fills this section (docs/BRING_YOUR_OWN.md §5).
+Otherwise paste `catalog_rules.py --engine <id> --network`, plus `--slug <slug> --network` for each first slug. -->
 
 ## Evidence (per slug)
 
