@@ -243,6 +243,10 @@ def load_local_engine(root: Path, eid: str, slugs: Optional[list[str]] = None) -
     if not found:
         raise Refusal(f"no local engine profile with id {eid!r} in {_LOCAL_ENGINES_REL}/")
     profile, path, _ = found
+    core_file = root / _CORE_ENGINES_REL / f"{eid}.yml"
+    if core_file.exists():
+        raise Refusal(f"{_CORE_ENGINES_REL}/{eid}.yml already exists in the curated catalog; "
+                      "the export would overwrite it")
     raw = _local_registry(root)
     on_engine = [{"slug": s, "kwargs": kw} for s, kw in raw.items()
                  if isinstance(kw, dict) and kw.get("engine") == eid]
@@ -537,6 +541,12 @@ def engine_gaps(root: Path, eng: dict, *, network: bool) -> tuple[list[str], lis
     if not eng["states"]:
         todo.append("an engine PR carries its first slugs: register one on a model we "
                     "serve and export again")
+    if "(local" in str(prof.get("display_name") or ""):
+        todo.append(f"give engines/{eid}.yml a real display_name (it still says it was "
+                    "registered locally)")
+    if "Registered by catalog.sh" in str(prof.get("notes") or ""):
+        todo.append(f"replace the catalog.sh `notes:` in engines/{eid}.yml with what the "
+                    "engine is and where it comes from")
     return gaps, findings, todo
 
 
@@ -628,6 +638,9 @@ def _resolves(root: Path, model_tree: Path, path: Path) -> str:
     lexical = Path(os.path.abspath(path))
     if not str(lexical).startswith(str(root) + os.sep):
         return "bad"
+    local_layer = root / _LOCAL_DIR_REL
+    if lexical == local_layer or local_layer in lexical.parents:
+        return "bad"   # gitignored: it exists here and on no other user's machine
     if "models-cache" in lexical.parts:
         return "ok" if (lexical == root / "models-cache" or root / "models-cache" in lexical.parents) else "bad"
     if lexical.exists():
@@ -861,7 +874,8 @@ def _export_check_block(findings: dict, network: bool, extra: list[str]) -> str:
              f"`export_pr.py --check{flag}`, {when}. "
              + ("Network rules ran (Hugging Face download, anonymous image pull)."
                 if network else
-                "**Network rules not run:** re-run with `--check --network` before opening the PR."),
+                "**Network rules not run:** export again with `--network` before opening the "
+                "PR, so this section records them."),
              "", "```text"]
     for subject, fs in findings.items():
         lines.append(rules.render(subject, fs, network))
@@ -1146,7 +1160,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             return EXIT_COLLISION
         if not args.network:
             _info("network rules not run (weights download from Hugging Face, anonymous "
-                  "image pull): re-run with --check --network before opening the PR.")
+                  "image pull): export again with --network before opening the PR, so "
+                  "PR_BODY.md records them.")
     except Refusal as exc:
         print(f"[export-pr] REFUSED: {exc}", file=sys.stderr)
         return EXIT_COLLISION

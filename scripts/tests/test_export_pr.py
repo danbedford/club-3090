@@ -681,6 +681,20 @@ class TestCuratedModelSlugs:
         assert "no-such-patch" in res.stderr and "resolves to nothing" in res.stderr
         assert not (tmp_path / "bundle").exists()
 
+    def test_a_mount_into_the_gitignored_local_layer_is_refused(self, core_root, tmp_path):
+        # It exists on the contributor's machine, so it "resolves" here, and on no
+        # one else's: a curated compose must never point into profiles-local.
+        shared = core_root / "scripts/lib/profiles-local/engines.d/shared.jinja"
+        shared.parent.mkdir(parents=True, exist_ok=True)
+        shared.write_text("x\n", encoding="utf-8")
+        bad = _sibling().replace(
+            "../../../patches/froggeric-chat-template/chat_template.jinja",
+            LOCAL_DEPTH + "scripts/lib/profiles-local/engines.d/shared.jinja")
+        _attach(core_root, {"vllm/qwen36-test-ext-dual": ({}, bad, _local_rel())})
+        res = _run_model(core_root, tmp_path / "bundle")
+        assert res.returncode == 3, res.stdout
+        assert "shared.jinja" in res.stderr and "resolves to nothing" in res.stderr
+
     def test_a_patch_only_the_local_layer_has_is_carried(self, core_root, tmp_path):
         # The compose mounts a patch directory beside it in the local layer; core
         # has none, so the bundle carries it to the same place in the curated tree.
@@ -850,6 +864,27 @@ class TestEngineExport:
         assert res.returncode == 3
         assert "install.method must be docker_image" in res.stderr
 
+    def test_catalog_sh_leftovers_are_listed_to_fix(self, core_root, tmp_path):
+        _seed_engine(core_root)
+        p = core_root / "scripts/lib/profiles-local/engines.d" / f"{ENG}.yml"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "display_name: vLLM test fork",
+            "display_name: vllm-testfork (local, registered from a compose)")
+            + "notes: >\n  Registered by catalog.sh from x.yml.\n", encoding="utf-8")
+        self._slug_on_fork(core_root)
+        out = tmp_path / "bundle"
+        res = _run_spec(core_root, out, {"engine_id": ENG})
+        assert res.returncode == 0, res.stderr + res.stdout
+        body = (out / "PR_BODY.md").read_text(encoding="utf-8")
+        assert "real display_name" in body and "catalog.sh `notes:`" in body
+
+    def test_engine_file_already_in_core_is_refused(self, core_root, tmp_path):
+        _seed_engine(core_root)
+        (core_root / "scripts/lib/profiles/engines" / f"{ENG}.yml").write_text(
+            "# placeholder with another id\nid: something-else\n", encoding="utf-8")
+        res = _run_spec(core_root, tmp_path / "bundle", {"engine_id": ENG})
+        assert res.returncode == 3 and "already exists in the curated catalog" in res.stderr
+
     def test_curated_engine_is_refused(self, core_root, tmp_path):
         res = _run_spec(core_root, tmp_path / "bundle", {"engine_id": "vllm-stable"})
         assert res.returncode == 3 and "already curated" in res.stderr
@@ -869,7 +904,7 @@ class TestPrBody:
         assert "- [x] **Case 3:**" in body and "## Case 3:" in body
         assert "## Case 2:" not in body
         assert f"- **Model:** `{MID}`" in body
-        assert "Network rules not run" in body
+        assert "Network rules not run" in body and "export again with `--network`" in body
         _assert_clean_body(body, root, out)
 
     def test_template_drift_fails_loudly(self, root, tmp_path):
