@@ -19,7 +19,7 @@ install:
   # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
   # Built 2026-08-12 from noonghunna/llama.cpp @ stack/club3090-moecachev1.1
   # (461e7bae4) with the SAME recipe as the v1 image — CUDA 12.8.1 base,
-  # CMAKE_CUDA_ARCHITECTURES="86;89;120", `server` target. Package is PRIVATE.
+  # CMAKE_CUDA_ARCHITECTURES="86;89;120", `server` target.
   spec: ghcr.io/noonghunna/llamacpp-club3090@sha256:55f434244cc28d4af99f9fbefdd338b9409dc567d532e7b23bbc7d37f16680f4
 
 # ---------------------------------------------------------------------------

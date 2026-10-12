@@ -20,7 +20,6 @@ install:
   # Built 2026-08-29 from noonghunna/buun-llama-cpp @ stack/club3090-moecachev1.5
   # (7104d5f4e), rebased onto tagged base b10675. Recipe: .devops/cuda.Dockerfile,
   # CUDA_DOCKER_ARCH="86;89;120", GGML_BACKEND_DL=ON, GGML_CPU_ALL_VARIANTS=ON.
-  # Package is PRIVATE.
   spec: ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210
 
 # ---------------------------------------------------------------------------
