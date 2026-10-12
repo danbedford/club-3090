@@ -152,6 +152,18 @@ if not f.ok:
     print(f"[catalog] cannot read {src}: {f.error or 'unparseable'}", file=sys.stderr)
     raise SystemExit(2)
 
+def _compose_default(v):
+    """`${VAR:-x}` (nested too) -> x, the value a compose runs with when nothing is
+    set; a bare `${VAR}` -> "" (the compose states none). Curated composes write
+    the KV format as `${KV_CACHE_DTYPE:-fp8_e4m3}`, and that literal string is in
+    no engine's or hardware profile's supported_kv_formats."""
+    v = str(v or "")
+    while (m := re.search(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^${}]*)\}", v)):
+        v = v[:m.start()] + m.group(1) + v[m.end():]
+    return "" if "${" in v else v
+
+kv = _compose_default(f.kv_dtype)
+
 # ENGINE — the one field that cannot be inferred for an image we do not ship.
 # Writing engine="unknown" into the catalog would be worse than refusing, and
 # this is exactly the user the local layer exists for (their own build).
@@ -340,7 +352,7 @@ if engine not in known:
               f"(llama.cpp | vllm | …) so drafter/feature logic knows what it "
               f"behaves like.", file=sys.stderr)
         raise SystemExit(2)
-    kvs = [f.kv_dtype] if f.kv_dtype else []
+    kvs = [kv] if kv else []
     drafted = ("--model-draft" in text) or (" -md " in text)
     lines = [
         "schema_version: 1",
@@ -490,7 +502,7 @@ spec = {
         "engine": engine, "drafter": None,
         "spec_method": f.spec_method or None,
         "offload": _offload,
-        "kv_format": f.kv_dtype or "f16", "tp": int(f.tp or 1),
+        "kv_format": kv or "f16", "tp": int(f.tp or 1),
         "max_ctx": max_ctx, "max_num_seqs": 1, "mem_util": 0.9,
         "compose_path": cpath, "default_port": port, "kvcalc_key": "SKIP"}},
 }
@@ -532,7 +544,7 @@ if attach:
             raise SystemExit(2)
         reuse = "local, reused" if variant in _ext_w else "new"
         _meta = {"path": _rel_path, "local_subdir": _rel_subdir, "size_gb": _size_gb,
-                 "format": fmt, "status": "incubating", "engine": engine, "kind": "main",
+                 "format": fmt, "status": "incubating", "kind": "main",
                  "verify_glob": "*.gguf" if fmt == "gguf" else "*.safetensors"}
         if _hf_repo:
             _meta["hf_repo"] = _hf_repo
@@ -553,6 +565,10 @@ if attach:
               f"{f.engine!r}, which picks none of them.", file=sys.stderr)
         raise SystemExit(2)
     _edir, _eprefix = _pair if _pair else (engine, engine)
+    # A weights variant names its engine DIRECTORY (`vllm`, `llama-cpp`), as every
+    # curated profile does (ADDING_MODELS, case 2) — not the engine id.
+    for _m in _attach_w.values():
+        _m["engine"] = _edir
     slug = slug_in or f"{_eprefix}/{mid}-{_topo}-{variant}"
     cpath = (f"scripts/lib/profiles-local/composes/{mid}/{_edir}"
              f"/compose/{_topo}/{variant}/base.yml")
@@ -591,7 +607,7 @@ _rows = [
     ("engine",    engine,            bool(engine_in)),
     ("workload",  workload,          bool(workload_in)),
     ("max_ctx",   max_ctx,           False),
-    ("kv_format", f.kv_dtype or "f16", False),
+    ("kv_format", kv or "f16", False),
     ("tp",        f.tp or 1,         False),
     ("port",      port,              bool(port_in)),
     ("weights",   f.model_path,      False),

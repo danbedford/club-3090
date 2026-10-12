@@ -76,11 +76,19 @@ res="$(py "$R" "
 import json
 from scripts.lib.profiles.compat import load_profiles
 from scripts.lib.profiles.compose_registry import get_registry
-m = load_profiles().models['$CM']
+p = load_profiles()
+m = p.models['$CM']
 e = get_registry()['$SLUG']
 print('variant' if 'own-awq' in m.weights else 'no-variant', e['model'], e['weights_variant'], e['origin'])
+# What the PR branch checks: the KV format is one the engine and every hardware
+# profile can name (a raw \${KV_CACHE_DTYPE:-…} would be in neither), and the new
+# variant names the engine DIRECTORY, as curated profiles do.
+eng = p.engines['vllm-stable']
+print('kv-ok' if e['kv_format'] in (eng.supported_kv_formats or []) else 'kv-bad:' + str(e['kv_format']),
+      'engine-dir:' + str(m.weights['own-awq'].get('engine')))
 ")"
-[[ "$res" == "variant $CM own-awq local" ]] && ok "profiles load with the variant; the entry names the curated model" \
+[[ "$res" == "variant $CM own-awq local"$'\n'"kv-ok engine-dir:vllm" ]] \
+  && ok "profiles load with the variant; the entry names the curated model; kv_format and engine: are catalog values" \
   || fail "loaded state: $res"
 
 # 4. a second slug reusing a curated variant merges into the same extension
