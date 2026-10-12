@@ -115,8 +115,9 @@ slug's undeclared variant fails the usual C14 check. The curated profile itself 
 never changed. (A `models.d/<core-id>.yml` is ignored with a warning: core wins.)
 Without the extension file, a local entry using a core model id is refused as before.
 
-`demote.py` never removes an extension, and `export_pr.py` refuses an attached slug:
-promoting it means adding the variant to the curated `models/<id>.yml` in a PR.
+`demote.py` never removes an extension. `export_pr.py` exports attached slugs (cases 1
+and 2): their composes, registry entries and a weights snippet holding only the new
+variants, for the curated `models/<id>.yml` (see below).
 
 ## Rules
 
@@ -184,22 +185,26 @@ complete, portable bundle and is the easiest way to do that.
 ## Contributing a local model back to the club catalog
 
 The local layer is a **staging ground for a contribution, not a dead end.** Once
-your model is validated here, one command turns it into a ready-to-commit PR
+your work is validated here, one command turns it into a ready-to-commit PR
 bundle — nothing in the repo is touched, output lands only under `--out`:
 
 ```bash
-python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check          # validate only, writes nothing
-python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --out ./bundle   # write the bundle
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check --network          # validate only, writes nothing
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --network --out ./bundle   # write the bundle
 ```
 
-The bundle contains `models/<id>.yml`, your compose translated to the **core**
-layout, and `registry-entry.yaml` (the `entries:` map in exactly the
-`registry.yaml` data subset, headed by its canonical merge command).
+The spec is `{"model_id": "<id>"}` for a model in `models.d/` (a new model) or for
+slugs attached to a curated model through `extends.d/`, and `{"engine_id": "<id>"}`
+for an engine in `engines.d/`. The bundle holds what the PR needs in the **core**
+layout, `registry-entry.yaml` (the `entries:` map in exactly the `registry.yaml`
+data subset, headed by its canonical merge command), and a `PR_BODY.md` filled from
+the repo's own PR template.
 
-`export_pr.py` **refuses (exit 3)** when the local model is missing what a
-maintainer would bounce the PR for — a real `display_name` / `family`, a
-well-formed weights map, complete registry-entry kwargs, a vLLM `kvcalc_key`, and
-the compose's mandatory `Status:` header. Fix what it names and re-run.
+`export_pr.py` **refuses (exit 3)** on what a maintainer would bounce the PR for:
+required profile and registry fields, the required catalog rules, and with
+`--network` the Hugging Face download and the anonymous image pull. Fix what it
+names and re-run. The full walkthrough, case by case, is
+[docs/BRING_YOUR_OWN.md](../../../docs/BRING_YOUR_OWN.md) §5.
 
 In the cockpit this is the **`E` — Export as PR bundle** action on the same
 Promote screen (`⏎ Write LOCAL layer · C WRITE CORE REGISTRY · E Export as PR bundle`).

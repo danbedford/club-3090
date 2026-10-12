@@ -415,23 +415,86 @@ The directory is
 
 ## 5. Share it / contribute it back
 
-**Turning your local model into a PR is one command.** `export_pr.py` reads the
-model you validated in §4 and emits a ready-to-commit bundle — the local layer is
-a **staging ground for a contribution, not a dead end**:
+**The local layer is a staging ground for a contribution, not a dead end.** What you
+send depends on which case it is ([ADDING_MODELS.md → Which case is
+this?](ADDING_MODELS.md#which-case-is-this)), and `export_pr.py` turns each one into a
+ready-to-commit bundle:
+
+| You validated | Case | In your local layer | Export spec | The bundle |
+|---|---|---|---|---|
+| a model the catalog doesn't have | 3 | `models.d/<id>.yml` (`catalog.sh register` or `promote.py` wrote it) | `{"model_id": "<id>"}` | `models/<id>.yml`, composes, `registry-entry.yaml`, `PR_BODY.md` |
+| a new slug of a model we ship, on an engine that already serves it | 1 | `extends.d/<id>.yml`, a compose and an entry ([below](#attaching-a-slug-to-a-model-we-ship)) | `{"model_id": "<id>"}` | composes, `registry-entry.yaml`, `weights-snippet-<id>.yaml`, `PR_BODY.md` |
+| the same, on an engine that doesn't serve it yet | 2 | the same | the same | the same |
+| an engine we don't ship | engine | `engines.d/<id>.yml` (`catalog.sh register` writes it) and its slugs | `{"engine_id": "<id>"}` | `scripts/lib/profiles/engines/<id>.yml`, its first slugs, `PR_BODY.md` |
+
+A model or an engine we don't have starts with a proposal, and the PR waits for the
+go-ahead: [model proposal](https://github.com/noonghunna/club-3090/issues/new?template=model-proposal.yml),
+[engine proposal](https://github.com/noonghunna/club-3090/issues/new?template=engine-proposal.yml).
+A new engine's PR carries its first slugs on a model we already serve; slugs on a model
+we don't have go in a model PR after it, so the engine export leaves them out and says so.
 
 ```bash
-python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check          # validate only
-python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --out ./bundle   # write the bundle
+echo '{"model_id": "<id>"}' > spec.json        # or {"engine_id": "<id>"}; add "slugs": [...] to send only some
+python3 scripts/lib/profiles/export_pr.py --spec-file spec.json --check --network              # validate, write nothing
+python3 scripts/lib/profiles/export_pr.py --spec-file spec.json --network --out ./bundle       # write the bundle
 ```
 
-You get `models/<id>.yml`, your compose translated to the **core** layout, and
-`registry-entry.yaml` (the `entries:` map in exactly the `registry.yaml` data
-subset, headed by the canonical merge command). It writes **only** under `--out`
-— nothing in the repo is touched — and it **refuses (exit 3)** when the model is
-missing what a maintainer would bounce the PR for: a real `display_name` /
-`family`, a well-formed weights map, complete registry kwargs, a vLLM
-`kvcalc_key`, and the compose's mandatory `Status:` header. Fix what it names,
-re-run, then open the PR with the bundle's contents.
+**What it checks.** It refuses (exit 3, nothing written) on anything a maintainer would
+bounce the PR for:
+
+- **Required fields:** a real `display_name` and `family` for a new model; `hf_repo`
+  and `files:` on every new weights variant, plus `verify_glob` for GGUF; complete
+  registry kwargs; a `kvcalc_key` on vLLM-type engines; the compose's `Status:` header.
+- **The catalog rules** (`scripts/lib/profiles/catalog_rules.py`), the same ones
+  `catalog.sh register` printed as advice:
+  - the engine and container name read as the same engine family;
+  - the internal port is one the serving scripts find;
+  - the cache mount runs with the host group;
+  - for an engine: lineage, and an image pinned by digest (or, for a stock or patched
+    engine, a release tag).
+- **The network rules**, with `--network`: `setup.sh` can download the weights from
+  Hugging Face, and the engine image pulls with no registry login. A rule that couldn't
+  run (no docker, a rate limit) counts as a failure there, never as a pass.
+- **Overwrites:** a slug, compose or engine profile the catalog already has.
+
+**What it does for you:**
+
+- **Placement.** Composes go where core keeps that engine's composes (a compose
+  `catalog.sh` filed under `vllm-stable/` lands in `vllm/`), and the slug keeps the
+  prefix core uses there.
+- **Mounts.** The local layer sits three directories deeper than `models/`, so a
+  compose that boots locally reaches repo files with three more `../`.
+  - The export re-points those mounts at the same targets.
+  - It carries a patch or template that only your local layer has into the bundle.
+  - It lists every such change in its plan and in `PR_BODY.md`.
+- **The PR body.** `PR_BODY.md` is the repo's own
+  [slug](../.github/PULL_REQUEST_TEMPLATE/slug.md) or
+  [engine](../.github/PULL_REQUEST_TEMPLATE/engine.md) template:
+  - the header is filled in and your case ticked;
+  - the sections for other cases are dropped;
+  - **Export check** holds the rules' output, and says whether the network rules ran.
+
+  Run the final export with `--network`, so that section records them.
+
+**Then, on a branch of your fork:**
+
+1. Make the branch in a fresh `git worktree add` (or clone), not in this checkout.
+   - A new worktree starts with an empty local layer.
+   - Here, your local copy would collide with the curated one you're adding: an
+     `extends.d` file that repeats a curated weights variant stops the profile loader.
+   - Settings and compile caches are shared. So are your weights, if `MODEL_DIR` points outside
+     the checkout (`bash scripts/settings.sh show`).
+2. Copy the bundle's `models/` (and `scripts/`, for an engine) into the repo.
+3. Merge `registry-entry.yaml` with the command in its header.
+4. Paste `weights-snippet-<id>.yaml` under `weights:` in `scripts/lib/profiles/models/<id>.yml`, if the bundle has one.
+5. Run `bash scripts/preflight-add-model.sh <slug>`. The slug is curated on that branch, so the rules are required now.
+6. Run the full `scripts/tests` suite.
+7. Open the PR with `gh pr create --body-file bundle/PR_BODY.md`, then fill in its Evidence section.
+
+Not coming from the local layer? Open the PR with the template (`?template=slug.md` or
+`?template=engine.md` on the compare URL), and paste
+`python3 scripts/lib/profiles/catalog_rules.py --slug <slug> --network` (or
+`--engine <id>`) into its Export check section.
 
 Writing the curated catalog **directly** is maintainer-only and double-gated
 (`promote.py --layer core` **plus** `C3_ALLOW_CORE_PROMOTE=1`). `promote.py` reads
@@ -439,8 +502,6 @@ that gate from your shell or, failing that, from your saved settings
 (`~/.config/club-3090/`, then a legacy repo-root `.env`), and says so when a file
 set it. `export` it in your shell or pass it per-invocation; a saved one leaves
 the gate open for every run.
-
-
 
 - Format your numbers with the [Results Card](RESULTS_CARD.md)
   (Serving · Quality · Takeaways).
@@ -451,6 +512,22 @@ the gate open for every run.
   block with a `Status:` field (and a `Caveats:` line if `⚠️`/`👁️`/`⏸️`/`🗑️`).
   It's gate-tested (`test-compose-status-drift`); schema in
   [`CLAUDE.md`](../CLAUDE.md) → "Profile schema header."
+
+### Attaching a slug to a model we ship
+
+Cases 1 and 2 serve a model the catalog already has, so the slug attaches to it rather
+than inventing a new model id. Neither `catalog.sh register` nor `promote.py` writes
+this yet, so it takes three files by hand ([profiles-local
+README](../scripts/lib/profiles-local/README.md), "Extending a core model"):
+
+- `scripts/lib/profiles-local/extends.d/<id>.yml`:
+  - `extends: <id>`;
+  - only the **new** weights variants your slug uses (an empty `weights: {}` when it
+    reuses a curated one);
+  - optionally `valid_tp_add`.
+- The compose, under `scripts/lib/profiles-local/composes/<id>/<engine-dir>/compose/<topology>/<quant>/<serving>.yml`.
+  Copy the nearest validated compose for that engine.
+- An entry in `scripts/lib/profiles-local/registry.local.json` whose `model` is the curated id.
 
 ## See also
 

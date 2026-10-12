@@ -27,6 +27,11 @@ An engine we don't ship yet is a fourth case: see [ADDING_ENGINES.md](ADDING_ENG
 - **The weights download.** `bash scripts/setup.sh <slug>` downloads the weights and every companion from Hugging Face on a machine that doesn't have them; hand-placed weights don't count. A gated repo is allowed, but the status note says so and names the license users must accept.
 - **The engine image pulls without credentials.** `DOCKER_CONFIG=$(mktemp -d) docker buildx imagetools inspect <install.spec>` succeeds on a machine with no registry login.
 
+Both are machine-checked, together with the naming and compose rules every slug must meet:
+`python3 scripts/lib/profiles/catalog_rules.py --slug <slug> --network --strict`. From the local
+layer, `export_pr.py --network` runs the same rules and records them in the PR body
+([BRING_YOUR_OWN.md §5](BRING_YOUR_OWN.md#5-share-it--contribute-it-back)).
+
 **Case 1** needs the [checklist](#the-checklist-whats-actually-left-to-do) steps for a compose and registry entry: 3–7, 9 and 10.
 
 **Case 2** adds these on top of case 1:
@@ -70,7 +75,7 @@ A large fraction of this workflow used to be hand-edited boilerplate. It isn't a
 | Weight-shard integrity | `scripts/preflight.sh` (sourced by `setup.sh` **and** `launch.sh`) runs the #1042 **shard check**: diffs each sharded-safetensors `index.json` weight_map against disk and hard-fails on absent shards *before* boot surfaces it as a 53 KB vLLM traceback. Bypassed by `FORCE=1` / `PREFLIGHT_NO_SHARD_CHECK=1`. | nothing | runs on every setup/launch |
 | Reasoning-mode sampler | Models whose card publishes per-mode sampler rows declare `sampler_profiles={"instruct": {…}, "thinking": {…}}` on their `_entry`. Composes DERIVE the sampler from that data: `ENABLE_THINKING=true` (vLLM) / `THINKING=1` (llama.cpp) alone selects the card's thinking row; explicit env still wins. Discussion #993's four-variable ritual is retired. | the `sampler_profiles` kwarg (see [_entry kwargs reference](#contract--compose_registry-entry-kwargs)) | `test-compose-sampler-profiles` |
 | Local (community) layer | `scripts/lib/profiles-local/` is a gitignored layer (except its README) loaded with the SAME schema/factories as core: `models.d/<id>.yml` + `composes/<id>/…` + plain-dict `registry.local.json` entries under the enforced `local/` slug namespace. Nothing core is ever touched; delete the files to revert. | run `promote.py --layer local` (the default) | loader refuses non-`local/` slugs; invalid local profiles raise loudly |
-| PR export | Validated LOCAL model → ready-to-commit CORE bundle via `export_pr.py`: emits `models/<id>.yml`, the core-layout compose, and a `registry-entry.yaml` entry file into `--out` (the `entries:` map in exactly the registry.yaml data subset — **not** a `compose_registry.py` source patch). | run it after LOCAL validation | `--check` mode; `test_export_pr.py` |
+| PR export | Validated LOCAL work → ready-to-commit CORE bundle via `export_pr.py`, written only under `--out`. A new model (`{"model_id"}`, case 3) gets `models/<id>.yml`, core-layout composes and a `registry-entry.yaml` entry file (the `entries:` map in exactly the registry.yaml data subset — **not** a `compose_registry.py` source patch). Slugs attached to a model we ship (cases 1 and 2) get composes, entries and a weights snippet, and an engine (`{"engine_id"}`) gets its profile plus its first slugs. Every bundle carries a filled `PR_BODY.md`. It refuses on the required catalog rules, and `--network` adds the Hugging Face download and the anonymous image pull. Walkthrough: [BRING_YOUR_OWN.md §5](BRING_YOUR_OWN.md#5-share-it--contribute-it-back). | run it after LOCAL validation | `--check` mode; `test_export_pr.py` |
 
 And the **c3 Bring→Promote lane** ties the whole producer path together: the cockpit's Bring & Validate pipeline (**① Bring** fit-check → ② Serve → ③ Tune → ④ Validate → **⑤ Promote**) computes the promotion scaffold from your measured config, writes the chosen layer via `promote.py`, then chains `diagnose-profile` + `preflight-add-model.sh` automatically as one confirmed action plan. Scaffold→write→diagnose→preflight is one button press; the *judgment* that remains is exactly what the MANUAL sections below mark.
 
@@ -263,7 +268,7 @@ exist; it was closed NO-GO. This is an engine property, not a per-model defect.
 | `test-preflight-shards` | absent shards refuse before boot |
 | `python3 tools/kv-calc.py --calibration` | VRAM predictions ≥80% within ±1.5 GB |
 
-Run the scoped triage via `bash scripts/preflight-add-model.sh <slug>`; the FULL `for t in scripts/tests/*.sh; do bash "$t"; done` stays authoritative before any commit.
+Run the scoped triage via `bash scripts/preflight-add-model.sh <slug>` (it includes the catalog rules, required for a curated slug, without the network checks); the FULL `for t in scripts/tests/*.sh; do bash "$t"; done` stays authoritative before any commit.
 
 ## MANUAL judgment calls — no test decides these
 
