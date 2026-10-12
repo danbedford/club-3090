@@ -7,7 +7,8 @@
 # broken one stops load_profiles() for every launcher, curated slugs included. So
 # besides the happy paths this pins the refusals that must fire BEFORE a write,
 # the rollback when a post-write check fails, and that the slug it names exports
-# without a rename (the reason the feature exists).
+# without a rename (the reason the feature exists). A NEW model registered on an
+# engine core already uses takes core's prefix and directory the same way (12).
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -182,6 +183,33 @@ if [[ -n "${LC:-}" ]]; then
     ok "llama-cpp-local: the compose's own engine picks llama-cpp/ of its two core directories"
   else fail "llama-cpp-local attach (rc=$code): $(echo "$out" | tail -4)"; fi
 else fail "fixture: no live llama-cpp-local slug in llama-cpp/"; fi
+
+# 12. a NEW model on an engine core already uses: core's prefix and directory too.
+# It used to be named after the engine id (vllm-stable/<model>), which
+# export_pr.py refuses, so every such slug needed a rename before a PR.
+R6="$(fresh newmodel)"
+NM=my-new-model
+mkdir -p "$R6/w/$NM"
+echo '{"model_type": "qwen3", "hidden_size": 5120, "num_hidden_layers": 64, "num_attention_heads": 40, "num_key_value_heads": 8, "max_position_embeddings": 262144}' \
+  > "$R6/w/$NM/config.json"
+out="$(reg "$R6" --model "$NM" --weights "$R6/w/$NM")"; code=$?
+res="$(py "$R6" "
+import yaml
+from scripts.lib.profiles.compose_registry import get_registry, COMPOSE_REGISTRY
+from scripts.lib.profiles.export_pr import core_compose_rel, registry_module, Refusal
+from pathlib import Path
+e = get_registry().get('vllm/$NM')
+prof = yaml.safe_load(open('scripts/lib/profiles-local/models.d/$NM.yml'))
+try:
+    rel = core_compose_rel(registry_module(Path('.').resolve()), 'vllm/$NM', e)
+except Refusal as exc:
+    rel = 'REFUSED: ' + str(exc)
+print(e is not None, e and e['compose_path'].split('/')[5], prof['weights']['local']['engine'], rel)
+")"
+want="True vllm vllm models/$NM/vllm/compose/dual/safetensors/base.yml"
+if [[ $code -eq 0 && "$res" == "$want" ]]; then
+  ok "a new model on vllm-stable is vllm/$NM, filed under vllm/, and exports without a rename"
+else fail "new model on a curated engine (rc=$code): $res / $(echo "$out" | tail -3)"; fi
 
 [[ $rc -eq 0 ]] && echo "PASS: catalog.sh register attaches slugs to curated models" \
   || echo "FAIL: test-catalog-attach"
