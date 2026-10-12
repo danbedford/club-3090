@@ -141,5 +141,37 @@ else
   ok "no script hand-lists container-name prefixes (registry-derived discovery)"
 fi
 
+# --- 6: an id no prefix arm knows resolves through its engine profile's type ----
+# A local engine (`catalog.sh register --engine my-build --engine-type llama.cpp`)
+# or a derivative named without its family prefix used to read `unknown`
+# everywhere. Runs against a fixture tree via ENGINE_KIND_ROOT, so the rig's own
+# local layer (gitignored, different on every machine) can't change the result.
+FX="$(mktemp -d)"
+trap 'rm -rf "$FX"' EXIT
+mkdir -p "$FX/scripts/lib/profiles/engines" "$FX/scripts/lib/profiles-local/engines.d"
+printf 'schema_version: 1\nid: "derivative-x"   # no family prefix\ndisplay_name: x\ntype: vllm\n' \
+  > "$FX/scripts/lib/profiles/engines/derivative.yml"          # filename != id, on purpose
+printf "schema_version: 1\nid: my-build\ndisplay_name: y\ntype: 'llama.cpp'  # from catalog.sh\n" \
+  > "$FX/scripts/lib/profiles-local/engines.d/my-build.yml"
+printf 'schema_version: 1\nid: my-sgl\ndisplay_name: z\ntype: SGLang\n' \
+  > "$FX/scripts/lib/profiles-local/engines.d/my-sgl.yml"
+printf 'schema_version: 1\nid: odd-engine\ndisplay_name: o\ntype: tensorrt-llm\n' \
+  > "$FX/scripts/lib/profiles-local/engines.d/odd.yml"
+# A stub registry: the slug path must read core AND local (get_registry), not
+# COMPOSE_REGISTRY alone, or a local slug reads `unknown`.
+cat > "$FX/scripts/lib/profiles/compose_registry.py" <<'PY'
+def get_registry(root=None):
+    return {"my-build/some-model": {"engine": "my-build"}}
+PY
+for pair in "derivative-x:vllm" "my-build:llamacpp" "my-sgl:sglang" "odd-engine:unknown" \
+            "no-such-engine:unknown" "vllm-stable:vllm"; do
+  id="${pair%:*}"; want="${pair##*:}"
+  got="$(ENGINE_KIND_ROOT="$FX" engine_kind_from_engine_id "$id")"
+  [[ "$got" == "$want" ]] || bad "engine_kind_from_engine_id $id (profile type)" "$want" "$got"
+done
+got="$(ENGINE_KIND_ROOT="$FX" engine_kind_from_slug my-build/some-model)"
+[[ "$got" == "llamacpp" ]] || bad "engine_kind_from_slug on a local-layer slug" "llamacpp" "$got"
+[[ $FAIL -eq 0 ]] && ok "unprefixed and local engine ids resolve through their profile's type; local slugs too"
+
 if [[ $FAIL -ne 0 ]]; then echo "FAIL: $NAME" >&2; exit 1; fi
 echo "PASS: $NAME (centralised engine-kind resolver, #1282)"

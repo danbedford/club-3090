@@ -7,6 +7,14 @@ type: vllm
 image_env: null
 
 stability: stable
+lineage:
+  relation: "stock"
+  base: "vllm"
+  base_version: null
+  source: "https://github.com/vllm-project/vllm"
+  source_ref: null
+  chain: []
+  delta: "pip range >=0.21.0rc0,<0.21.0"
 install:
   method: pip
   spec: "vllm>=0.21.0rc0,<0.21.0"

@@ -6,6 +6,14 @@ type: llama.cpp
 image_env: BEELLAMA_IMAGE
 
 stability: experimental
+lineage:
+  relation: "fork"
+  base: "llama.cpp"
+  base_version: null
+  source: "https://github.com/Anbeeld/beellama.cpp"
+  source_ref: "98caf25aef870a6c745503c5dec9f5cbc5f50691"
+  chain: []
+  delta: "Anbeeld's llama.cpp fork, preview v0.3.2: DFlash drafter support and KVarN KV"
 install:
   method: docker_image
   # Single source of truth for the beellama image — switch.sh/launch.sh inject this as

@@ -6,6 +6,14 @@ type: vllm
 image_env: VLLM_IMAGE
 
 stability: stable
+lineage:
+  relation: "stock"
+  base: "vllm"
+  base_version: "0.31.0"
+  source: "https://github.com/vllm-project/vllm"
+  source_ref: "db9527a46873454610df6dbedf79a36d6bf1a7f6"
+  chain: []
+  delta: null
 install:
   method: docker_image
   spec: vllm/vllm-openai:v0.31.0

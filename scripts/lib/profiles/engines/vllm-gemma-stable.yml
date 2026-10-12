@@ -6,6 +6,14 @@ type: vllm
 image_env: VLLM_IMAGE
 
 stability: stable
+lineage:
+  relation: "patched"
+  base: "vllm"
+  base_version: "0.22.0"
+  source: "https://github.com/vllm-project/vllm"
+  source_ref: "799c3afa5d5b17b676d04e0b58a5628943bb4003"
+  chain: []
+  delta: "our vllm#40391 per-head-KV and vllm#42006 tool-parser overlays"
 install:
   method: docker_image
   spec: vllm/vllm-openai:v0.22.0

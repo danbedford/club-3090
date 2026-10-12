@@ -46,7 +46,7 @@ Every engine declares how it relates to the engines we already ship. Lineage dec
 | **fork** | a separately maintained source tree branched from an engine, with its own releases | whatever it hasn't diverged on; check, don't assume | everything it changed, plus the fork chain | `llamacpp-club3090-*`, `llama-cpp-prism` |
 | **new** | an independent codebase | nothing | the whole tooling contract below | `exllamav3` (TabbyAPI) |
 
-> **Not yet in the schema:** `lineage:` arrives with the follow-up that teaches `engine-kind.sh` to read an engine's family from its profile, which also backfills every existing profile. Until that lands, the loader rejects the key with `UnknownProfileKeyError`, so don't add it to a profile yet.
+The loader validates the field (`compat.py → _lineage`): unknown keys, an unknown relation, an unquoted numeric version and a malformed `chain` are refused. `test-engine-lineage` holds every curated profile to it.
 
 The field:
 
@@ -70,11 +70,11 @@ Rules that follow from the class:
 
 ## CONTRACT — naming
 
-Three of our tools identify an engine's family by **prefix**: the engine-kind resolver, container discovery, and the switch.sh preflights. A derivative or fork that takes the family's prefix inherits that family's handling. One that doesn't gets none of it.
+Several of our tools identify an engine's family by **prefix**. The engine-kind resolver falls back to the profile's `type` when an engine *id* has no family prefix, so checks that classify by id or slug still work: the gateway emitter, launch-knob coverage, launch settings and `spec-sweep`. Container discovery, the classification that serving scripts do from container names and image refs, and the switch.sh preflights still key on prefixes. A derivative or fork that takes the family's prefix inherits all of that family's handling; one that doesn't inherits only the id-based part.
 
 | Thing | Rule | Precedent |
 |---|---|---|
-| Engine id | `<family>-<name>` for a derivative or fork. `scripts/lib/engine-kind.sh` matches ids by prefix: `vllm*`, `sglang*`/`sgl-*`, `exllamav3*`/`exl3*`, and `llama-cpp*`/`llamacpp*`/`ik-llama*`/`beellama*` | `vllm-lmcache`, `llamacpp-club3090-v1.6` |
+| Engine id | `<family>-<name>` for a derivative or fork. `scripts/lib/engine-kind.sh` matches ids by prefix (`vllm*`, `sglang*`/`sgl-*`, `exllamav3*`/`exl3*`, `llama-cpp*`/`llamacpp*`/`ik-llama*`/`beellama*`), and falls back to the profile's `type` for any other id | `vllm-lmcache`, `llamacpp-club3090-v1.6` |
 | Profile filename | equals the id: `engines/<id>.yml`. Four tools open the profile by filename, and `llama-cpp-mainline.yml` (id `llama-cpp-local`) is silently skipped by all of them | — |
 | Slug prefix | a vLLM derivative keeps `vllm/`, because switch.sh runs its hardware and GPU-fit preflights only for `vllm/` slugs. A fork may take its own prefix | `vllm/…` on `vllm-lmcache`; `llamacpp-club3090/…`, `llama-cpp-prism/…` |
 | Compose directory | `models/<model>/<engine-dir>/compose/…`, one directory per engine profile family | `vllm-lmcache/`, `llamacpp-club3090/`, `llama-cpp-prism/` |
@@ -106,7 +106,7 @@ The file lives at `scripts/lib/profiles/engines/<id>.yml`, loaded by `scripts/li
 
 | Field | Meaning | Read by |
 |---|---|---|
-| `type` | what the engine *behaves like*: `vllm`, `llama.cpp`, `sglang` or `exllamav3`. **Not validated.** | compat (C6 Genesis, C9 drafter match; C12 kv-calc projection runs only for `vllm`); `launch_compat` hardware injection (mem-util and concurrency env exist only for `vllm`/`sglang`); DeepGEMM; the derived-compose generator. ⚠️ `engine-kind.sh` does **not** read it; see [Engine kind](#1-engine-kind--scriptslibengine-kindsh). |
+| `type` | what the engine *behaves like*: `vllm`, `llama.cpp`, `sglang` or `exllamav3`. **Not validated.** | compat (C6 Genesis, C9 drafter match; C12 kv-calc projection runs only for `vllm`); `launch_compat` hardware injection (mem-util and concurrency env exist only for `vllm`/`sglang`); DeepGEMM; the derived-compose generator. `engine-kind.sh` reads it when the engine id has no family prefix; see [Engine kind](#1-engine-kind--scriptslibengine-kindsh). |
 | `stability` | `stable`, `experimental` or `deprecated` | `launch_compat --stable` |
 | `min_sm` | lowest compute capability | C3 |
 | `image_env`, `install.method`, `install.spec` | the env var the image is injected as; `docker_image` or `pip`; the image ref | the launchers (`resolve_engine_pin`), `registry-emit`, `engine-pin-bump.sh` |
@@ -145,14 +145,14 @@ This is the one place engine classification lives. Each entry point prints `vllm
 
 | Entry point | Evidence |
 |---|---|
-| `engine_kind_from_engine_id` | the registry `engine:` id, matched by prefix |
+| `engine_kind_from_engine_id` | the registry `engine:` id, matched by prefix; otherwise the engine profile's `type` (core profiles, then the local layer) |
 | `engine_kind_from_container` | the container name, matched by prefix |
 | `engine_kind_from_image` | the image ref, matched as a substring |
 | `engine_kind_from_fingerprint` | the response's `system_fingerprint` |
 | `engine_kind_from_owned_by` | `/v1/models` `owned_by` |
-| `engine_kind_from_slug` | the registry entry → the id function. Core slugs only, so local-layer slugs read `unknown` |
+| `engine_kind_from_slug` | the registry entry (core and local) → the id function |
 
-**Make every one of them resolve your engine.** A derivative or fork needs to map to its base; the [naming](#contract--naming) rules do most of that. A new family needs a new kind value, arms in all six functions, and probes added to `scripts/tests/test-engine-kind-resolver.sh`. Never add a classifier anywhere else: that test fails on a private `startswith("vllm")` or on a hand-listed container prefix in `scripts/`.
+**Make every one of them resolve your engine.** A derivative or fork needs to map to its base: its profile's `type` covers the id-based entry points, and the [naming](#contract--naming) rules cover the container- and image-based ones. A new family needs a new kind value, arms in all six functions, a `type` mapping in `_engine_kind_from_profile_type`, and probes added to `scripts/tests/test-engine-kind-resolver.sh`. Never add a classifier anywhere else: that test fails on a private `startswith("vllm")` or on a hand-listed container prefix in `scripts/`.
 
 What `unknown` costs, by consumer:
 
@@ -262,6 +262,7 @@ The compose layout, header and registry contract are the same as in [ADDING_MODE
 | Guard | Proves |
 |---|---|
 | `test-engine-kind-resolver` | your engine resolves to a kind, and no private classifier crept in |
+| `test-engine-lineage` | every curated engine declares a valid lineage; non-stock engines name source and commit; every engine id resolves to a family |
 | `test-engine-port-set-drift` | every copy of the engine-port set agrees |
 | `test-profiles-compat` | the profile loads, cross-references resolve, and every slug fits a canonical scenario |
 | `test-engine-label-matches-compose` | the compose image default equals `install.spec` |
@@ -288,7 +289,7 @@ The compose layout, header and registry contract are the same as in [ADDING_MODE
 2. ☐ Lineage class and fields; naming (id, filename, slug prefix, compose directory, container name, internal port)
 3. ☐ Image published by the engine's maintainer, digest-pinned, pullable without credentials; `install.spec` and `image_env`; allowlist arm in **both** launchers
 4. ☐ `engines/<id>.yml`, plus hardware KV formats, kv-calc tables (vLLM-type) and the `test-profiles-compat` count
-5. ☐ `engine-kind.sh` arms and resolver probes
+5. ☐ The engine resolves in `engine-kind.sh` from its id, container name and image (`test-engine-lineage` checks the id); arms and resolver probes for a new family
 6. ☐ Discovery: standard internal port, or every mirrored port set updated
 7. ☐ Throughput and acceptance parsing verified on a live boot (`bench.sh` and `health.sh` show acceptance)
 8. ☐ Launch knobs mapped or declared unsupported; hardware-injection names mapped
@@ -310,7 +311,7 @@ The compose layout, header and registry contract are the same as in [ADDING_MODE
 
 | Pitfall | Symptom | Fix |
 |---|---|---|
-| Engine id without the family prefix | every tool reads the engine as `unknown`; budgets refused; `health.sh` blank | `<family>-<name>`, or add arms to `engine-kind.sh` |
+| Engine id and containers without the family prefix | id-based checks fall back to the profile's `type`, but serving scripts that classify by container or image read `unknown`: `health.sh` blank, vLLM log parsing lost | `<family>-<name>` for the id and the containers |
 | Non-standard internal port | `verify*.sh`, `bench.sh` and `health.sh` can't find the server without `URL=` and `CONTAINER=` | the family's standard port |
 | Classifier written outside `engine-kind.sh` | the seventh and eighth private classifiers (#1341; #1247 skipped the weights check on 30 slugs) | delegate to `engine-kind.sh` |
 | Registry `chat_template` doesn't match what the compose serves | a later system message raises; tool keys unsorted; effort defaults differ | mount and `--chat-template`, or label it `native` and document it |

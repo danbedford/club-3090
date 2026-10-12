@@ -26,6 +26,16 @@ type: llama.cpp
 image_env: null
 
 stability: stable
+# The ik-llama slugs also register against this profile but run ikawrakow's own
+# image (IK_LLAMA_IMAGE), so this lineage describes the mainline slugs only.
+lineage:
+  relation: "stock"
+  base: "llama.cpp"
+  base_version: "b11429"
+  source: "https://github.com/ggml-org/llama.cpp"
+  source_ref: "d81235049384534c167caea52b85a694f6103d14"
+  chain: []
+  delta: null
 install:
   method: docker_image
   spec: ghcr.io/ggml-org/llama.cpp@sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c

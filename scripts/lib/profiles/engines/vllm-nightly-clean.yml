@@ -6,6 +6,14 @@ type: vllm
 image_env: VLLM_IMAGE
 
 stability: deprecated
+lineage:
+  relation: "stock"
+  base: "vllm"
+  base_version: "nightly-bf610c2f56764e1b30bc6065f4ceace3d6e59036"
+  source: "https://github.com/vllm-project/vllm"
+  source_ref: "bf610c2f56764e1b30bc6065f4ceace3d6e59036"
+  chain: []
+  delta: null
 install:
   method: docker_image
   spec: vllm/vllm-openai:nightly-bf610c2f56764e1b30bc6065f4ceace3d6e59036

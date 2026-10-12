@@ -6,6 +6,14 @@ type: vllm
 image_env: VLLM_IMAGE
 
 stability: experimental
+lineage:
+  relation: "stock"
+  base: "vllm"
+  base_version: null
+  source: "https://github.com/vllm-project/vllm"
+  source_ref: null
+  chain: []
+  delta: "vLLM's gemma4-unified arch-preview tag. The tag is mutable and the image labels carry no revision"
 install:
   method: docker_image
   spec: vllm/vllm-openai:gemma4-unified

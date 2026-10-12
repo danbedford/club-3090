@@ -6,6 +6,14 @@ type: vllm
 image_env: VLLM_IMAGE
 
 stability: experimental
+lineage:
+  relation: "patched"
+  base: "vllm"
+  base_version: "0.24.0"
+  source: "https://github.com/vllm-project/vllm"
+  source_ref: "ee0da84ab9e04ac7610e28580af62c365e898389"
+  chain: []
+  delta: "our gemma-image-fixes mount"
 install:
   method: docker_image
   # Stock vLLM v0.24.0 — the DiffusionGemma arch is NATIVE here (PR #45163 merged

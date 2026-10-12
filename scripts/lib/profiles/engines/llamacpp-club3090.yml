@@ -6,6 +6,14 @@ type: llama.cpp
 image_env: LLAMACPP_CLUB3090_IMAGE
 
 stability: experimental
+lineage:
+  relation: "fork"
+  base: "llama.cpp"
+  base_version: null
+  source: "https://github.com/noonghunna/llama.cpp"
+  source_ref: "e0a20894906a79dad7016cb3c12a237a8c5230b3"
+  chain: []
+  delta: "MoE expert cache (leloch's moe-cache) plus our deltas, branch stack/club3090-moe-cache"
 install:
   method: docker_image
   # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).

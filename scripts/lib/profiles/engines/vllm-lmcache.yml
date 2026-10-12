@@ -6,6 +6,14 @@ type: vllm
 image_env: VLLM_IMAGE
 
 stability: experimental
+lineage:
+  relation: "derivative"
+  base: "vllm"
+  base_version: null
+  source: "https://github.com/LMCache/LMCache"
+  source_ref: null
+  chain: []
+  delta: "LMCache's own vLLM image (tiered persistent prefix-KV cache). The v0.4.7-cu129 tag was re-pushed and the image carries no revision label"
 install:
   method: docker_image
   # PINNED BY DIGEST, not tag — the `lmcache/vllm-openai:v0.4.7-cu129` TAG IS MUTABLE:
