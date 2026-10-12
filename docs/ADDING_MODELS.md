@@ -11,6 +11,38 @@ End-to-end workflow for onboarding a new model into club-3090's **central regist
 >
 > Paths 1–3 (serve + **tune** + **validate** + **catalog** your own model without touching core files) are walked end-to-end in [BRING_YOUR_OWN.md](BRING_YOUR_OWN.md) — start there if you're not yet cataloging. This page is the promotion step *after* you've validated a config there.
 
+## Which case is this?
+
+A **model** is the weights and their profile (`scripts/lib/profiles/models/<id>.yml`). A **slug** is one way of serving it: one model, on one engine, in one topology, with one compose and one registry entry. A model is usually served by several engines, each through its own slugs (`vllm/…`, `sgl/…`, `llamacpp/…`). Every curated slug PR is one of three cases:
+
+| Case | Example | What's new besides the compose and registry entry | Start with |
+|---|---|---|---|
+| **1. The lightweight path:** a new slug for a model and engine we already pair | another quant, topology or KV format of `qwen3.8-27b` on vLLM | maybe a `weights:` entry for a new quant | the PR (`?template=slug.md`) |
+| **2. A model we serve, on an engine that doesn't serve it yet** | `qwen3.8-27b` on an engine with no `qwen3.8-27b` slugs | the engine has to cover the model, and the model has to behave the same on it | the PR (`?template=slug.md`) |
+| **3. A model we don't have** | the first slug of a new model | the whole model profile | a [model proposal](https://github.com/noonghunna/club-3090/issues/new?template=model-proposal.yml), then the PR |
+
+An engine we don't ship yet is a fourth case: see [ADDING_ENGINES.md](ADDING_ENGINES.md). If a new model also needs a new engine, open both proposals, then send one PR for each, engine first.
+
+**Every case: a user must be able to set it up.**
+- **The weights download.** `bash scripts/setup.sh <slug>` downloads the weights and every companion from Hugging Face on a machine that doesn't have them; hand-placed weights don't count. A gated repo is allowed, but the status note says so and names the license users must accept.
+- **The engine image pulls without credentials.** `DOCKER_CONFIG=$(mktemp -d) docker buildx imagetools inspect <install.spec>` succeeds on a machine with no registry login.
+
+**Case 1** needs the [checklist](#the-checklist-whats-actually-left-to-do) steps for a compose and registry entry: 3–7, 9 and 10.
+
+**Case 2** adds these on top of case 1:
+- **The engine covers the model.** The engine profile lists the model's `family` in `supported_model_families`, its weights `format` in `supported_weight_formats`, the slug's KV format in `supported_kv_formats`, and its drafter's `spec_method` in `supported_drafters`. `diagnose-profile.sh <slug>` shows which check fails.
+- **The weights are reachable.** Weights shared with the model's other slugs stay as they are; qwen3.8's SGLang slugs, for example, reuse the `fp8` entry, which says `engine: vllm`. A *new* `weights:` entry names its engine directory in `engine:`. `weights_companions` lists any drafter or mmproj the compose mounts.
+- **The compose starts from this engine's sibling.** Copy the nearest validated compose *for this engine* (usually another model's) into `models/<model>/<engine-dir>/compose/…`, not the model's compose for a different engine. Engines differ in flags, entrypoints and env names.
+- **Same model, same behaviour.** The model's other slugs set the expectations. Match them, or say why not in `Caveats:`:
+  - the chat template (the registry `chat_template` plus the template patch's `load_bearing_when` slugs in `patches.yml`);
+  - the default reasoning effort and thinking budgets, and a request's own `reasoning_effort` is honoured (on SGLang it once was silently overridden, #1439);
+  - `sampler_profiles`;
+  - the tool-call parser and the served model name.
+- **Quality against the model's existing slug.** Run the 8-pack at the same reasoning effort as the model's existing slug on another engine. A large gap is a finding, not a footnote.
+- **No gateway or default changes by accident.** `gateway=True` belongs to one slug per model, and a `DEFAULTS` row changes only as a stated proposal.
+
+**Case 3** is the rest of this page: the ModelProfile contract, kv-calc and calibration, and the full checklist. Also run `CLUB3090_CHECK_HF_REPOS=1 bash scripts/tests/test-hf-repos-resolve.sh`: it confirms every `hf_repo` exists, and it's opt-in, so the normal sweep skips it. A new model starts at 🐣 Incubating. Send one model per PR ([CONTRIBUTING.md](../CONTRIBUTING.md)), and add the model's family to each engine profile its slugs use.
+
 ## Run a local GGUF without the catalog
 
 Want to serve a GGUF you grabbed yourself (a community quant, your own conversion) on llama.cpp or ik-llama, *without* the full catalog workflow? Three steps:

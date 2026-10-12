@@ -1,0 +1,109 @@
+name: Engine proposal
+description: Propose a new inference engine for the curated catalog, before writing the PR.
+title: "[engine] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A new engine is a maintenance commitment: every pin bump, every tooling change and every new
+        model has to consider it. So we decide whether to carry it **before** the work starts. Read
+        [docs/ADDING_ENGINES.md](https://github.com/noonghunna/club-3090/blob/master/docs/ADDING_ENGINES.md)
+        first, and wait for a maintainer go-ahead before opening the PR.
+
+        You don't need this if:
+        - **you're adding a slug to an engine we already ship.** Open the PR with `?template=slug.md`.
+        - **it's a newer image of an engine we already ship.** That's a pin bump.
+        - **you only want to run your own engine build on your rig.** Use `bash scripts/catalog.sh register`
+          ([docs/BRING_YOUR_OWN.md](https://github.com/noonghunna/club-3090/blob/master/docs/BRING_YOUR_OWN.md)).
+
+  - type: input
+    id: engine
+    attributes:
+      label: Engine and proposed id
+      description: The engine's name, its upstream project, and the id you propose (`<family>-<name>` for a derivative or fork, e.g. `vllm-lmcache`).
+    validations:
+      required: true
+
+  - type: dropdown
+    id: relation
+    attributes:
+      label: Lineage
+      description: How it relates to the engines we already ship. See "CONTRACT — engine lineage" in docs/ADDING_ENGINES.md.
+      options:
+        - stock — upstream's official release image, unmodified
+        - patched — a stock image plus patches we would carry
+        - derivative — upstream engine at a pinned version plus a third party's patch set or launcher
+        - fork — a separately maintained source tree branched from an engine
+        - new — an independent codebase
+    validations:
+      required: true
+
+  - type: input
+    id: base
+    attributes:
+      label: Base engine and version
+      description: For anything except "new". The release or commit of the base it is pinned to, e.g. "vLLM 0.30.0".
+
+  - type: input
+    id: source
+    attributes:
+      label: Public source and commit
+      description: The repository and full commit SHA the image is built from. An engine we can't trace to public source isn't accepted.
+    validations:
+      required: true
+
+  - type: textarea
+    id: image
+    attributes:
+      label: Image
+      description: |
+        The image the engine's own maintainer publishes from its public source, ideally from the source
+        repo's CI, and its `@sha256:` digest. It must pull without registry credentials. We don't build or publish images for new engines, and we
+        don't accept an image re-published by anyone other than the maintainer. No published image means
+        the proposal waits until there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: patches
+    attributes:
+      label: Changes on top of its upstream
+      description: Every patch or launcher change, and for each one whether it is upstream already (link the PR or commit). Engine patches follow "upstream first" (AGENTS.md).
+
+  - type: textarea
+    id: runtime
+    attributes:
+      label: Runtime contract
+      description: |
+        - internal port
+        - launcher: the stock CLI, or a wrapper (list its env names)
+        - served model name
+        - log lines for throughput and spec-decode acceptance
+        - chat template, default reasoning effort, thinking budgets
+        - tool-call parser
+    validations:
+      required: true
+
+  - type: textarea
+    id: slugs
+    attributes:
+      label: First slugs
+      description: The model, weights, topology and KV format of the slugs you plan to ship with it.
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this engine
+      description: What it does that no shipped engine does, measured. Give the card, and numbers against the closest shipped slug for the same model.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Before you start
+      options:
+        - label: I've read docs/ADDING_ENGINES.md.
+          required: true
+        - label: I'll wait for a maintainer go-ahead on this issue before opening the PR.
+          required: true

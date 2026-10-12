@@ -6,6 +6,11 @@ where it doesn't.
 For typo / doc-only changes, ignore everything below the "Summary" section.
 -->
 
+> **Adding a slug or an engine?** Use its own template instead: add `?template=slug.md` or
+> `?template=engine.md` to the compare URL, or run `gh pr create --template slug.md`. A new engine or
+> a model we don't have starts with a proposal: [engine](https://github.com/noonghunna/club-3090/issues/new?template=engine-proposal.yml),
+> [model](https://github.com/noonghunna/club-3090/issues/new?template=model-proposal.yml).
+
 ## Summary
 
 <!-- One paragraph. What problem does this solve, what's the measured impact,

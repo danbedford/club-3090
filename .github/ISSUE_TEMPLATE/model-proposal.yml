@@ -1,0 +1,79 @@
+name: Model proposal
+description: Propose a model we don't serve yet for the curated catalog, before writing the PR.
+title: "[model] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A new model brings its own profile, KV math, calibration and validation, so we scope it before the
+        work starts. Read "Which case is this?" in
+        [docs/ADDING_MODELS.md](https://github.com/noonghunna/club-3090/blob/master/docs/ADDING_MODELS.md)
+        first, and wait for a maintainer go-ahead before opening the PR.
+
+        You don't need this if:
+        - **we already serve the model.** A new slug for it, on any engine we ship, goes straight to a
+          PR with `?template=slug.md`.
+        - **you only want to run it on your own rig.** See
+          [docs/BRING_YOUR_OWN.md](https://github.com/noonghunna/club-3090/blob/master/docs/BRING_YOUR_OWN.md).
+
+        If the model also needs an engine we don't ship, open an
+        [engine proposal](https://github.com/noonghunna/club-3090/issues/new?template=engine-proposal.yml) too.
+
+  - type: input
+    id: model
+    attributes:
+      label: Model and proposed id
+      description: The Hugging Face repo of the base model, and the id you propose (e.g. `qwen3.8-27b`).
+    validations:
+      required: true
+
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architecture
+      description: |
+        Dense or MoE (total and active parameters), the attention layout (full, sliding, hybrid or linear; which
+        layers grow KV), KV heads and head dim, max context, vision, and thinking/reasoning behaviour.
+        Quote `config.json` where you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: weights
+    attributes:
+      label: Weights
+      description: The quantised weights each first slug uses (repo, format, size), their license, and whether the repo is public or gated. Users download them with `setup.sh`, so a gated repo means every user must accept the license and set an HF token.
+    validations:
+      required: true
+
+  - type: textarea
+    id: slugs
+    attributes:
+      label: First slugs
+      description: Engine, topology, KV format and drafter for each slug you plan to ship. Each engine must be one we ship, or have its own engine proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: Serving behaviour
+      description: Chat template, reasoning-effort levels and thinking control, tool-call format, and the card's recommended sampler settings for each mode.
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this model
+      description: What it adds to the catalog, measured where possible. Give the card(s), and numbers against the closest model we serve.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Before you start
+      options:
+        - label: I've read "Which case is this?" in docs/ADDING_MODELS.md.
+          required: true
+        - label: I'll wait for a maintainer go-ahead on this issue before opening the PR.
+          required: true
