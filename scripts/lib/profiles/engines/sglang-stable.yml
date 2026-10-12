@@ -6,6 +6,14 @@ type: sglang
 image_env: SGLANG_IMAGE
 
 stability: stable
+lineage:
+  relation: "stock"
+  base: "sglang"
+  base_version: "0.5.21"
+  source: "https://github.com/sgl-project/sglang"
+  source_ref: "e00930c5489053f26d86b179cee0d087f846acbb"
+  chain: []
+  delta: null
 # ⚠️ IMAGE PINNING: `install.spec` below IS the effective image as of #1365.
 # It did NOT used to be. `export_variant_engine_pin` early-returned unless the
 # slug was `vllm/*` or `beellama/*`, so nothing injected SGLANG_IMAGE and the

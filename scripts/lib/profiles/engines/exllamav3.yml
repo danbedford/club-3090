@@ -6,6 +6,14 @@ type: exllamav3
 image_env: EXLLAMAV3_IMAGE
 
 stability: experimental
+lineage:
+  relation: "new"
+  base: null
+  base_version: null
+  source: "https://github.com/theroyallab/tabbyAPI"
+  source_ref: "53da7919d4e45c63f4acbcbbc00cbe0f60a1ce65"
+  chain: []
+  delta: "TabbyAPI server over ExLlamaV3. Our image, built with upstream's own Dockerfile (predates the maintainer-published-image rule)"
 install:
   method: docker_image
   # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).

@@ -6,6 +6,14 @@ type: llama.cpp
 image_env: LLAMACPP_PRISM_IMAGE
 
 stability: experimental
+lineage:
+  relation: "fork"
+  base: "llama.cpp"
+  base_version: null
+  source: "https://github.com/PrismML-Eng/llama.cpp"
+  source_ref: "6684606ac1bfcf8e31465369d9365df03b3af904"
+  chain: []
+  delta: "PrismML's fork with ternary (PQ2_0) kernels, release prism-b10770-6684606. Our image wraps their release tarball unmodified (predates the maintainer-published-image rule)"
 install:
   method: docker_image
   # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).

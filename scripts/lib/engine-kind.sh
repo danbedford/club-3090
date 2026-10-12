@@ -35,10 +35,10 @@
 # would silently read "unknown".
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 
-# ⚠️ ADDING AN ENGINE: add its arms HERE and nowhere else. The inventory of
-# everything else an engine touches is in the maintainer tracker; the guard
-# `scripts/tests/test-engine-kind-resolver.sh` fails if a private classifier
-# reappears in scripts/.
+# ⚠️ ADDING AN ENGINE: add its arms HERE and nowhere else. Everything else an
+# engine touches is listed in docs/ADDING_ENGINES.md ("CONTRACT — wiring it into
+# the tooling"). The guard `scripts/tests/test-engine-kind-resolver.sh` fails if
+# a private classifier reappears in scripts/.
 
 # Registry `engine:` id → family. Ids are prefixed by family everywhere in the
 # catalog (vllm-stable, sglang-stable, llamacpp-club3090-v1.6), with two
@@ -46,14 +46,55 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 # `llama-cpp-local` (the mainline profile's id — note the FILE is
 # llama-cpp-mainline.yml; it is the only profile whose basename != its id) and
 # `beellama-local`.
+#
+# An id no prefix arm recognises falls back to its engine profile's `type:`
+# (what the engine behaves like). That covers a local engine registered with
+# `catalog.sh register --engine my-build --engine-type llama.cpp`, and a
+# derivative or fork named without its family prefix. The prefix arms run first,
+# so the common path reads no files.
 engine_kind_from_engine_id() {
+  local kind
   case "${1:-}" in
-    vllm*)                                   echo "vllm" ;;
-    sglang*|sgl-*)                           echo "sglang" ;;
-    exllamav3*|exl3*)                        echo "exllamav3" ;;
-    llama-cpp*|llamacpp*|ik-llama*|beellama*) echo "llamacpp" ;;
-    *)                                       echo "unknown" ;;
+    vllm*)                                   kind="vllm" ;;
+    sglang*|sgl-*)                           kind="sglang" ;;
+    exllamav3*|exl3*)                        kind="exllamav3" ;;
+    llama-cpp*|llamacpp*|ik-llama*|beellama*) kind="llamacpp" ;;
+    *)                                       kind="unknown" ;;
   esac
+  if [[ "$kind" == "unknown" && -n "${1:-}" ]]; then
+    kind="$(_engine_kind_from_profile_type "$1")"
+  fi
+  echo "$kind"
+  return 0
+}
+
+# The engine profile whose `id:` equals $1 → its `type:` → family. Core profiles
+# first, then the local layer (profiles-local/engines.d), the loader's
+# precedence. Matched on the `id:` line, not the filename, because
+# llama-cpp-mainline.yml declares `id: llama-cpp-local`. `type` is not
+# validated anywhere, so accept the spellings people write and map anything
+# else to unknown.
+_engine_kind_from_profile_type() {
+  local want="$1" root dir f id type
+  root="${ENGINE_KIND_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)}"
+  for dir in "$root/scripts/lib/profiles/engines" "$root/scripts/lib/profiles-local/engines.d"; do
+    [[ -d "$dir" ]] || continue
+    for f in "$dir"/*.yml; do
+      [[ -f "$f" ]] || continue
+      id="$(sed -nE "s/^id:[[:space:]]*[\"']?([^\"'#[:space:]]+)[\"']?.*$/\1/p" "$f" | head -n 1)"
+      [[ "$id" == "$want" ]] || continue
+      type="$(sed -nE "s/^type:[[:space:]]*[\"']?([^\"'#[:space:]]+)[\"']?.*$/\1/p" "$f" | head -n 1)"
+      case "${type,,}" in
+        vllm)                        echo "vllm" ;;
+        sglang)                      echo "sglang" ;;
+        exllamav3)                   echo "exllamav3" ;;
+        llama.cpp|llama-cpp|llamacpp) echo "llamacpp" ;;
+        *)                           echo "unknown" ;;
+      esac
+      return 0
+    done
+  done
+  echo "unknown"
   return 0
 }
 
@@ -131,10 +172,10 @@ engine_kind_from_slug() {
 import sys, os
 sys.path.insert(0, os.path.join(sys.argv[2], "scripts/lib/profiles"))
 try:
-    from compose_registry import COMPOSE_REGISTRY
+    from compose_registry import get_registry
+    e = get_registry(sys.argv[2]).get(sys.argv[1])  # core + the local layer
 except Exception:
     raise SystemExit
-e = COMPOSE_REGISTRY.get(sys.argv[1])
 if e:
     print(e.get("engine") or "")
 PY

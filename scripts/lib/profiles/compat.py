@@ -281,6 +281,12 @@ class EngineProfile:
     # resolver returns {} for those rather than raising, so a slug is still
     # resolvable for hardware injection even when its image cannot be pinned.
     image_env: Optional[str] = None
+    # Where the engine comes from (docs/ADDING_ENGINES.md, "CONTRACT — engine
+    # lineage"): relation stock | patched | derivative | fork | new, its base and
+    # version, the public source and commit it was built from. None only for a
+    # profile that predates the field (local engines written by `catalog.sh
+    # register`); every core profile declares it (test-engine-lineage).
+    lineage: Optional[dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -672,8 +678,40 @@ def _workload(data: dict[str, Any], path: Path) -> WorkloadProfile:
     )
 
 
+LINEAGE_RELATIONS = ("stock", "patched", "derivative", "fork", "new")
+LINEAGE_KEYS = {"relation", "base", "base_version", "source", "source_ref", "chain", "delta"}
+_LINEAGE_STRINGS = ("base", "base_version", "source", "source_ref", "delta")
+
+
+def _lineage(value: Any, path: Path) -> Optional[dict[str, Any]]:
+    """Validate an engine profile's `lineage:` block (keys are checked by
+    _check_profile_keys). Values are checked here because a wrong one is as
+    silent as a typo'd key: an unknown relation, or `base_version: 0.31`, which
+    YAML reads as the float 0.31 rather than the version string."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ProfileError(f"{path}: `lineage` must be a mapping, got {type(value).__name__}")
+    relation = value.get("relation")
+    if relation not in LINEAGE_RELATIONS:
+        raise ProfileError(
+            f"{path}: lineage.relation must be one of {', '.join(LINEAGE_RELATIONS)}, got {relation!r}")
+    out = dict(value)
+    for key in _LINEAGE_STRINGS:
+        v = out.get(key)
+        if v is not None and not isinstance(v, str):
+            hint = " (quote it: YAML reads an unquoted version as a number)" if key == "base_version" else ""
+            raise ProfileError(f"{path}: lineage.{key} must be a string, got {v!r}{hint}")
+    chain = out.get("chain") or []
+    if not isinstance(chain, list) or not all(isinstance(c, str) for c in chain):
+        raise ProfileError(f"{path}: lineage.chain must be a list of strings, got {chain!r}")
+    out["chain"] = tuple(chain)
+    return out
+
+
 def _engine(data: dict[str, Any], path: Path) -> EngineProfile:
-    _check_profile_keys(path, data, ENGINE_PROFILE_KEYS)
+    _check_profile_keys(path, data, ENGINE_PROFILE_KEYS,
+                        nested={"lineage": (data.get("lineage"), LINEAGE_KEYS)})
     return EngineProfile(
         schema_version=data["schema_version"],
         id=data["id"],
@@ -694,6 +732,7 @@ def _engine(data: dict[str, Any], path: Path) -> EngineProfile:
         genesis_pin=data.get("genesis_pin"),
         notes=data.get("notes"),
         image_env=data.get("image_env"),
+        lineage=_lineage(data.get("lineage"), path),
     )
 
 
