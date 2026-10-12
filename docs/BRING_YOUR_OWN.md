@@ -367,6 +367,16 @@ bash scripts/catalog.sh list            # the whole local layer, and what in it 
 - It reads the files directly, so it still answers when the layer is broken. `--json`
   prints the same as data.
 
+`catalog.sh prune` removes what `list` reports as unused:
+- **What goes:** attached variants and extension files no slug uses, composes no entry
+  uses, engine profiles `register` wrote that no slug runs on, and local models with
+  no slugs.
+- **What stays:** an engine registered with `register-engine`, and anything broken or
+  shadowed. Those need a decision, so they're listed and left alone.
+- **Safety:** it prints every path first. Without a terminal it refuses unless `-y` is
+  given, because git can't bring these files back. If the catalog stops loading
+  afterwards, every file is put back.
+
 ```
   single   my-llamacpp/my-model    gguf/base.yml    (NA: 66K) · local
 ```

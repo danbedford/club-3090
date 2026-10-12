@@ -24,7 +24,8 @@ scripts/lib/profiles-local/
 Editing them later: `catalog.sh update --slug S --set K=V` (a slug's entry),
 `catalog.sh update-weights --model M --variant V --set K=V` (a weights variant in
 models.d/ or extends.d/), `catalog.sh update-engine --id ID --add/--set …` (an engine).
-`catalog.sh list` shows all of it, and what is broken, shadowed or unused.
+`catalog.sh list` shows all of it, and what is broken, shadowed or unused;
+`catalog.sh prune` removes the unused part.
 ```
 
 ## The easy way: c3 → ⑤ Promote
@@ -128,7 +129,8 @@ slug's undeclared variant fails the usual C14 check. The curated profile itself 
 never changed. (A `models.d/<core-id>.yml` is ignored with a warning: core wins.)
 Without the extension file, a local entry using a core model id is refused as before.
 
-`demote.py` never removes an extension. `export_pr.py` exports attached slugs (cases 1
+`demote.py` never removes an extension; `catalog.sh prune` does, once no slug uses a
+variant or the file. `export_pr.py` exports attached slugs (cases 1
 and 2): their composes, registry entries and a weights snippet holding only the new
 variants, for the curated `models/<id>.yml` (see below).
 
