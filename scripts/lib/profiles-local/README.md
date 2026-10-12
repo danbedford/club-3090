@@ -36,8 +36,8 @@ That writes all three artifacts above and prints `PROMOTE_OK <slug>`.
 ## Removing a local model
 
 ```
-python3 scripts/lib/profiles/demote.py --slug local/<name>            # asks first
-python3 scripts/lib/profiles/demote.py --slug local/<name> --dry-run  # show the plan
+python3 scripts/lib/profiles/demote.py --slug <engine>/<name>            # asks first
+python3 scripts/lib/profiles/demote.py --slug <engine>/<name> --dry-run  # show the plan
 ```
 
 Removes all three artifacts and prints `DEMOTE_OK <slug>`. It takes the
@@ -48,7 +48,8 @@ compose no longer exists.
 
 It only ever touches this layer. There is no `--layer core`: a curated entry
 lives in git-tracked files and git is its removal tool, so asking to remove a
-non-`local/` slug is refused before anything is read. If two local slugs share a
+slug that isn't in this layer is refused before anything is read (a curated one is
+named as such). If two local slugs share a
 model id (only slugs attached to a core model can, see below), the shared compose
 tree is **kept** and only the slug you named is unregistered. An `extends.d` file
 is never removed by demote.
@@ -63,7 +64,7 @@ is never removed by demote.
 
    ```json
    {
-     "local/my-model-dual-autoround-int4": {
+     "vllm/my-model-dual-autoround-int4": {
        "model": "my-model",
        "weights_variant": "autoround-int4",
        "workload": "long-ctx-single",
@@ -115,15 +116,21 @@ slug's undeclared variant fails the usual C14 check. The curated profile itself 
 never changed. (A `models.d/<core-id>.yml` is ignored with a warning: core wins.)
 Without the extension file, a local entry using a core model id is refused as before.
 
-`demote.py` never removes an extension, and `export_pr.py` refuses an attached slug:
-promoting it means adding the variant to the curated `models/<id>.yml` in a PR.
+`demote.py` never removes an extension. `export_pr.py` exports attached slugs (cases 1
+and 2): their composes, registry entries and a weights snippet holding only the new
+variants, for the curated `models/<id>.yml` (see below).
 
 ## Rules
 
-- **Slug namespace:** local slugs MUST start with `local/`. The loader refuses
-  anything else, and refuses any slug or model id that collides with a core
-  catalog row (loudly — a broken `registry.local.json` fails the launch rather
-  than silently shrinking the catalog).
+- **Slug shape:** local slugs are `<engine>/<name>`, the same shape as curated
+  ones; the entry's `origin` field is what marks them local. The old `local/`
+  prefix was removed (#1202) and is refused, with the replacement named. The
+  loader refuses a malformed `registry.local.json`, a duplicate local slug, and a
+  local model id that is a curated model's unless `extends.d/` attaches it —
+  loudly, so a broken file fails the launch rather than silently shrinking the
+  catalog. A local slug whose name a curated one also uses is **not** an error:
+  core wins the lookup and yours is marked shadowed (rename it with
+  `catalog.sh rename`).
 - **Status:** local entries start at `"incubating"` — hidden from
   `switch.sh --list`, launched only with `--force` (see the Status enum in
   `compose_registry.py`). Promote up the enum locally as your model validates.
@@ -134,9 +141,9 @@ promoting it means adding the variant to the curated `models/<id>.yml` in a PR.
   model can never become someone's auto-default.
 - **No core writes:** adding a model to the CURATED catalog is a maintainer PR.
   `promote.py --layer core` exists for that workflow and is double-gated
-  (`--layer core` **and** `C3_ALLOW_CORE_PROMOTE=1`); it edits
-  `compose_registry.py` directly and should only ever run in a maintainer
-  checkout on a clean branch (git is the rollback).
+  (`--layer core` **and** `C3_ALLOW_CORE_PROMOTE=1`); it writes the curated
+  files and merges the entry into `registry.yaml`, and should only ever run in
+  a maintainer checkout on a clean branch (git is the rollback).
 
 ## Uninstall
 
@@ -184,22 +191,27 @@ complete, portable bundle and is the easiest way to do that.
 ## Contributing a local model back to the club catalog
 
 The local layer is a **staging ground for a contribution, not a dead end.** Once
-your model is validated here, one command turns it into a ready-to-commit PR
+your work is validated here, one command turns it into a ready-to-commit PR
 bundle — nothing in the repo is touched, output lands only under `--out`:
 
 ```bash
-python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check          # validate only, writes nothing
-python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --out ./bundle   # write the bundle
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check --network               # validate only, writes nothing
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --network --out ~/pr-bundle-<id>   # write the bundle, outside the checkout
 ```
 
-The bundle contains `models/<id>.yml`, your compose translated to the **core**
-layout, and `registry-entry.yaml` (the `entries:` map in exactly the
-`registry.yaml` data subset, headed by its canonical merge command).
+The spec is `{"model_id": "<id>"}` for a model in `models.d/` (a new model) or for
+slugs attached to a curated model through `extends.d/`, and `{"engine_id": "<id>"}`
+for an engine in `engines.d/`. The bundle holds what the PR needs in the **core**
+layout, `registry-entry.yaml` (the `entries:` map in exactly the `registry.yaml`
+data subset, headed by its canonical merge command), and a `PR_BODY.md` filled from
+the repo's own PR template.
 
-`export_pr.py` **refuses (exit 3)** when the local model is missing what a
-maintainer would bounce the PR for — a real `display_name` / `family`, a
-well-formed weights map, complete registry-entry kwargs, a vLLM `kvcalc_key`, and
-the compose's mandatory `Status:` header. Fix what it names and re-run.
+`export_pr.py` **refuses (exit 3)** on what a maintainer would bounce the PR for:
+required profile and registry fields, the required catalog rules, and with
+`--network` the Hugging Face download and the anonymous image pull. Fix what it
+names and re-run. The full walkthrough, case by case, is
+[docs/BRING_YOUR_OWN.md](../../../docs/BRING_YOUR_OWN.md) §5.
 
-In the cockpit this is the **`E` — Export as PR bundle** action on the same
-Promote screen (`⏎ Write LOCAL layer · C WRITE CORE REGISTRY · E Export as PR bundle`).
+In the cockpit, a new model exports with the **`E` — Export as PR bundle** action on
+the same Promote screen (`⏎ Write LOCAL layer · C WRITE CORE REGISTRY · E Export as PR bundle`).
+Slugs attached to a curated model and engines are command-line only for now.

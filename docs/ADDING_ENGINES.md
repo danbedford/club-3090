@@ -295,7 +295,7 @@ The compose layout, header and registry contract are the same as in [ADDING_MODE
 8. ☐ Launch knobs mapped or declared unsupported; hardware-injection names mapped
 9. ☐ Template, default effort and thinking budgets match the model's other slugs, or are documented
 10. ☐ Composes follow the conventions above, including the unguarded ones
-11. ☐ Registry entries for the first slugs ([ADDING_MODELS.md](ADDING_MODELS.md)), then `preflight-add-model.sh` green for each
+11. ☐ Registry entries for the first slugs ([ADDING_MODELS.md](ADDING_MODELS.md)), then `preflight-add-model.sh` green for each. Registered locally first? `export_pr.py` with `{"engine_id": "<id>"}` bundles the profile, the first slugs and a filled `engine.md` body ([BRING_YOUR_OWN.md §5](BRING_YOUR_OWN.md#5-share-it--contribute-it-back))
 12. ☐ Boot each slug with `switch.sh <slug>` from the branch; record `docker inspect --format '{{.Image}}'`; `verify-full`, then `rebench-full`
 13. ☐ Full guard suite and the c3 suite green
 14. ☐ Docs:
