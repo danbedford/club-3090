@@ -149,6 +149,15 @@ raise SystemExit(0 if 'their-engine/byo-probe' in get_registry('.') else 1)") 2>
     else
       echo "  FAIL engine profile missing declared lineage or the compose's kv format"; rc=1
     fi
+    # The image the catalog's checks read: `method: docker_image` and one unquoted
+    # spec token. It wrote `method: docker` and a quoted spec, which the anonymous-
+    # pull rule passed without pulling and engine-pin-bump.sh could not parse.
+    if command grep -qx "  method: docker_image" "$EP" \
+        && command grep -qx "  spec: ghcr.io/someone/their-own-engine:v1" "$EP"; then
+      echo "  ok   engine profile pins the compose's image as an unquoted docker_image spec"
+    else
+      echo "  FAIL engine profile install block is not method docker_image + unquoted spec"; rc=1
+    fi
     if command grep -qE "^(supported_drafters|features|supported_model_families):" "$EP"; then
       echo "  FAIL engine profile claims capabilities the compose does not evidence"; rc=1
     else

@@ -69,6 +69,18 @@ LINEAGE_NO_SOURCE_REF = {
 FILENAME_NOT_ID = {
     "llama-cpp-local": "llama-cpp-mainline.yml predates the rule; tools that open profiles by filename skip it",
 }
+_NIGHTLY = "a nightly tag upstream purges; no live slug runs on it"
+IMAGE_PIN_EXCEPTIONS = {
+    "vllm-nightly-clean": _NIGHTLY,
+    "vllm-nightly-dflash": _NIGHTLY,
+    "vllm-nightly-full": _NIGHTLY,
+    "vllm-nightly-mtp": _NIGHTLY,
+}
+
+# install.method values. `docker` is what catalog.sh register wrote before it
+# learned `docker_image`; it still names an image, so it gets the pull check.
+IMAGE_METHODS = {"docker_image", "docker"}
+NO_IMAGE_METHODS = {"pip"}
 PASS, FAIL, UNCHECKED = "pass", "fail", "unchecked"
 
 
@@ -246,9 +258,17 @@ def _image_inspect(spec: str) -> tuple[str, str]:
 
 def _image_rule(spec: str, method: str, network: bool,
                 inspect: Callable[[str], tuple[str, str]]) -> Finding:
-    if method != "docker_image" or not spec:
+    """Anything that names an image gets the pull check: a method that installs no
+    image passes, and an install with no image to pull fails rather than passing."""
+    if method in NO_IMAGE_METHODS:
         return Finding("image-anonymous", REQUIRED, PASS,
-                       f"not a pinned docker image (install.method {method or 'unset'})", DOC_IMAGE)
+                       f"installed with {method}, not an image", DOC_IMAGE)
+    if not spec:
+        return Finding("image-anonymous", REQUIRED, FAIL,
+                       "no image to pull: install.spec is empty and the compose names none", DOC_IMAGE)
+    if method and method not in IMAGE_METHODS:
+        return Finding("image-anonymous", REQUIRED, UNCHECKED,
+                       f"not checked: install.method {method!r} is not one the catalog knows", DOC_IMAGE)
     if not network:
         return Finding("image-anonymous", REQUIRED, UNCHECKED,
                        "not checked: run with --network", DOC_IMAGE)
@@ -367,7 +387,7 @@ def _slug_findings(root: Path, slug: str, entry: dict, inp: dict, facts: dict, *
 
     out.extend(_same_model_defaults(slug, entry, registry))
     out.extend(_weights_rules(root, entry, network, hf))
-    out.append(_image_rule(str(install.get("spec") or ""), str(install.get("method") or ""), network, inspect))
+    out.append(_image_rule(inp["image"], str(install.get("method") or ""), network, inspect))
     return out
 
 
@@ -494,8 +514,41 @@ def check_engine(root: Path, engine_id: str, *, network: bool = False,
                                f"relation {rel}: missing {', '.join(gaps)}" if gaps else f"relation {rel}",
                                DOC_LINEAGE))
     install = profile.get("install") or {}
+    out.append(_pin_rule(engine_id, profile, path.read_text(encoding="utf-8"), is_core))
     out.append(_image_rule(str(install.get("spec") or ""), str(install.get("method") or ""), network, inspect))
     return out
+
+
+def _pin_rule(engine_id: str, profile: dict, text: str, is_core: bool) -> Finding:
+    """How the image is pinned (CONTRACT — image provenance): a derivative, fork or
+    new engine pins by digest; a stock or patched one may pin a release tag, never
+    nightly-* or latest. The spec is one unquoted token on exactly one `spec:` line,
+    because engine-pin-bump.sh and resolved_config.py parse it that way."""
+    install = profile.get("install") or {}
+    method, spec = str(install.get("method") or ""), str(install.get("spec") or "")
+    if method in NO_IMAGE_METHODS:
+        return Finding("image-pin", REQUIRED, PASS, f"installed with {method}", DOC_IMAGE)
+    if not spec:
+        return Finding("image-pin", REQUIRED, FAIL, "no install.spec", DOC_IMAGE)
+    lines = re.findall(r"(?m)^\s*spec:\s*(.*?)\s*$", text)
+    relation = str((profile.get("lineage") or {}).get("relation") or "")
+    last = spec.rsplit("/", 1)[-1]
+    tag = last.rsplit(":", 1)[-1] if ":" in last and "@" not in last else ""
+    if len(lines) != 1 or lines[0] != spec:
+        problem = (f"{len(lines)} `spec:` lines" if len(lines) != 1 else f"`spec: {lines[0]}` is quoted")
+        msg = f"{problem}: write install.spec as one unquoted token on exactly one `spec:` line"
+    elif "@sha256:" in spec:
+        return Finding("image-pin", REQUIRED, PASS, "pinned by digest", DOC_IMAGE)
+    elif relation in ("stock", "patched") and tag and tag != "latest" and not tag.startswith("nightly"):
+        return Finding("image-pin", REQUIRED, PASS, f"{relation} engine on release tag {tag}", DOC_IMAGE)
+    elif relation in ("stock", "patched"):
+        msg = f"{spec}: pin a release tag or a digest, never {tag or 'no tag'}"
+    else:
+        msg = f"{spec}: a {relation or 'non-stock'} engine pins its image by digest (@sha256:…)"
+    if is_core and engine_id in IMAGE_PIN_EXCEPTIONS:
+        return Finding("image-pin", ADVISORY, FAIL,
+                       f"known exception: {IMAGE_PIN_EXCEPTIONS[engine_id]}", DOC_IMAGE)
+    return Finding("image-pin", REQUIRED, FAIL, msg, DOC_IMAGE)
 
 
 # ── output ───────────────────────────────────────────────────────────────────
