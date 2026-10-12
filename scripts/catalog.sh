@@ -328,8 +328,16 @@ if engine not in known:
         "stability: experimental",
         f"min_sm: {minsm_in or '7.5'}",
     ]
-    if f.image:
-        lines += ["install:", "  method: docker", f'  spec: "{f.image}"']
+    # The profile is the source of truth for the image (docs/ADDING_ENGINES.md →
+    # CONTRACT — image provenance): `method: docker_image`, and the spec as one
+    # unquoted token, since engine-pin-bump.sh and resolved_config.py parse it that
+    # way. A `${VAR:-image}` compose default is the image; a bare `${VAR}` names none.
+    # This wrote `method: docker` and a quoted spec, which every image check skipped.
+    _img = f.image or ""
+    if _img.startswith("${") and ":-" in _img and _img.endswith("}"):
+        _img = _img[_img.index(":-") + 2:-1]
+    if _img and "${" not in _img and not any(c.isspace() for c in _img):
+        lines += ["install:", "  method: docker_image", f"  spec: {_img}"]
     if kvs:
         lines += ["supported_kv_formats:"] + [f"  - {k}" for k in kvs]
     lines += ["notes: >",

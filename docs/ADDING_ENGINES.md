@@ -133,7 +133,6 @@ Everything else that has to agree with the profile:
 | `scripts/tests/test-profiles-compat.sh` | the hard-coded engine count (+1) | itself |
 | `scripts/lib/profiles/canonical_scenarios.py` | each slug must fit at least one canonical scenario, so a Hopper-only engine can't pass today | `test-profiles-compat` |
 | `arch_patches.yml` | `engine_pin` rows, only if the engine should be a base for the derived-compose generator and Pull-Gate (vLLM-type only). Most new engines don't | `generate_compose.validate_engine_pin` |
-| `export_pr.py` `_ENGINE_SLUG_PREFIX` | only for engines contributed through the local → PR export path. An unmapped directory silently skips its checks | `export_pr.py --check` |
 
 ## CONTRACT — wiring it into the tooling
 

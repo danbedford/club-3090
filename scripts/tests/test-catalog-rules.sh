@@ -61,11 +61,13 @@ for eid in core_ids:
     for f in cr.check_engine(root, eid):
         if f.level == cr.REQUIRED and f.state == cr.FAIL:
             fails.append(f"engine {eid}: required rule {f.rule} fails: {f.message}")
-        if f.rule == "image-anonymous" and f.state == cr.PASS and "not a pinned docker image" not in f.message:
+        if f.rule == "image-anonymous" and f.state == cr.PASS and "not an image" not in f.message:
             fails.append(f"engine {eid}: image-anonymous passed without --network")
 
 # ── 2. exception lists: shrink only, and each entry still applies ───────────
-ALLOWED = {"LINEAGE_NO_SOURCE_REF": {"vllm-lmcache"}, "FILENAME_NOT_ID": {"llama-cpp-local"}}
+ALLOWED = {"LINEAGE_NO_SOURCE_REF": {"vllm-lmcache"}, "FILENAME_NOT_ID": {"llama-cpp-local"},
+           "IMAGE_PIN_EXCEPTIONS": {"vllm-nightly-clean", "vllm-nightly-dflash", "vllm-nightly-full",
+                                    "vllm-nightly-mtp"}}
 for name, allowed in ALLOWED.items():
     extra = set(getattr(cr, name)) - allowed
     check(not extra, f"{name} grew ({sorted(extra)}): the exception lists may only shrink")
@@ -74,6 +76,13 @@ for eid in cr.FILENAME_NOT_ID:
     check(prof is not None and is_core, f"FILENAME_NOT_ID names {eid}, which has no core profile")
     if path is not None and path.stem == eid:
         fails.append(f"{eid}: its profile is now {path.name}; remove it from FILENAME_NOT_ID")
+live_engines = {e.get("engine") for e in live.values()}
+for eid in cr.IMAGE_PIN_EXCEPTIONS:
+    # The reason given is that nothing live runs on it; hold the list to that.
+    check(eid not in live_engines, f"{eid} is an image-pin exception but a live slug runs on it")
+    prof, path, _ = cr._engine_profile(root, eid, engines)
+    if prof is not None and cr._pin_rule(eid, prof, path.read_text(encoding="utf-8"), False).state == cr.PASS:
+        fails.append(f"{eid}: its image pin passes now; remove it from IMAGE_PIN_EXCEPTIONS")
 for eid in cr.LINEAGE_NO_SOURCE_REF:
     prof, _, _ = cr._engine_profile(root, eid, engines)
     if prof and (prof.get("lineage") or {}).get("source_ref"):
@@ -133,7 +142,7 @@ for slug, (_, want) in FIX.items():
     got = nonpass(batch[slug])
     check(got == want, f"{slug}: expected {sorted(want)}, got {sorted(got)}")
     for f in batch[slug]:
-        if f.rule in ("weights-download", "image-anonymous") and f.state == cr.PASS and "not a pinned" not in f.message:
+        if f.rule in ("weights-download", "image-anonymous") and f.state == cr.PASS and "not an image" not in f.message:
             fails.append(f"{slug}: {f.rule} passed without --network")
 # The helper run itself, column by column: empty fields mid-row must stay empty.
 # (No finding reads the image column, so the fixtures above cannot see a shift there.)
@@ -222,6 +231,34 @@ for status, want in (("ok", cr.PASS), ("denied", cr.FAIL), ("error", cr.UNCHECKE
 check(cr._image_rule("ghcr.io/x/y:v1", "docker_image", False, boom).state == cr.UNCHECKED,
       "image-anonymous without --network should be unchecked")
 check(cr._image_rule("", "pip", True, boom).state == cr.PASS, "a non-image install should not need a pull")
+# catalog.sh register wrote `method: docker` for every engine it registered, and the
+# rule used to pass any method but `docker_image` without a pull: a false clean.
+check(cr._image_rule("ghcr.io/x/y:v1", "docker", True, lambda s: ("denied", "d")).state == cr.FAIL,
+      "a `method: docker` image skipped the pull check")
+check(cr._image_rule("ghcr.io/x/y:v1", "", True, lambda s: ("ok", "")).state == cr.PASS,
+      "an image with no install.method (the compose's own image) was not pulled")
+check(cr._image_rule("", "docker_image", True, boom).state == cr.FAIL, "an install with no image passed")
+check(cr._image_rule("x", "conda", True, boom).state == cr.UNCHECKED, "an unknown install method passed")
+
+# ── 5b. image pin: digest for derivative / fork / new; release tag for stock / patched
+def pin(relation, spec, *, text=None, method="docker_image"):
+    prof = {"install": {"method": method, "spec": spec}, "lineage": {"relation": relation}}
+    return cr._pin_rule("fx-engine", prof, text if text is not None else f"install:\n  spec: {spec}\n", False).state
+D = "ghcr.io/o/e@sha256:" + "0" * 64
+for relation, spec, want, why in (
+    ("fork", D, cr.PASS, "a fork pinned by digest"),
+    ("derivative", "ghcr.io/o/e:v1.2", cr.FAIL, "a derivative on a tag"),
+    ("new", "ghcr.io/o/e:latest", cr.FAIL, "a new engine on latest"),
+    ("stock", "vllm/vllm-openai:v0.31.0", cr.PASS, "a stock engine on a release tag"),
+    ("patched", "vllm/vllm-openai:nightly-abc", cr.FAIL, "a patched engine on a nightly tag"),
+    ("stock", "vllm/vllm-openai", cr.FAIL, "a stock engine with no tag"),
+    ("stock", "localhost:5000/vllm", cr.FAIL, "a registry port read as a tag"),
+):
+    check(pin(relation, spec) == want, f"image-pin, {why}: expected {want}")
+check(pin("fork", D, text=f'install:\n  spec: "{D}"\n') == cr.FAIL, "image-pin: a quoted spec passed")
+check(pin("fork", D, text=f"install:\n  spec: {D}\nother:\n  spec: {D}\n") == cr.FAIL,
+      "image-pin: two spec lines passed")
+check(pin("stock", "vllm==0.20.2", method="pip") == cr.PASS, "image-pin: a pip install needs no image pin")
 
 unchecked = [cr.Finding("weights-download", cr.REQUIRED, cr.UNCHECKED, "", "")]
 check(not cr.blocking(unchecked, network=False), "unchecked blocked without --network")

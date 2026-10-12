@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,7 +31,7 @@ sys.path.insert(0, str(REPO))
 
 # The throwaway repo needs everything the compose_registry import + the merge
 # proof (get_registry()) need: the whole lib tree (loader shim + registry.yaml).
-_COPY_TREES = ("scripts/lib",)
+_COPY_TREES = ("scripts/lib", ".github/PULL_REQUEST_TEMPLATE")
 
 
 @pytest.fixture()
@@ -524,3 +525,394 @@ class TestModes:
             env={**os.environ, **env_extra},
         )
         assert res.returncode == 0, res.stderr + res.stdout
+
+
+# ── Cases 1 and 2: slugs a contributor attached to a CURATED model ──────────
+# docs/ADDING_MODELS.md "Which case is this?". The local layer attaches them via
+# extends.d/<core-id>.yml (local_extensions.py); the bundle carries composes,
+# entries and only the NEW weights variants, never the curated models/<id>.yml.
+
+CM = "qwen3.6-27b"
+EXT = "test-ext-awq"
+SIBLING = "models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml"
+LOCAL_DEPTH = "../../../../../../../../../"   # composes/<id>/<dir>/compose/<t>/<q>/ → root
+CORE_DEPTH = "../../../../../../"             # models/<id>/<dir>/compose/<t>/<q>/ → root
+
+
+@pytest.fixture()
+def core_root(root):
+    # The curated model's own tree, so mounts into models/qwen3.6-27b resolve.
+    shutil.copytree(REPO / "models" / CM, root / "models" / CM,
+                    ignore=shutil.ignore_patterns("__pycache__", "cache"))
+    (root / "models" / CM / "vllm" / "cache").mkdir()
+    # The repo-level file its composes mount.
+    shutil.copy2(REPO / "scripts/detect_nvlink.sh", root / "scripts/detect_nvlink.sh")
+    return root
+
+
+def _ext_variant(**over):
+    w = {"path": "test-ext", "local_subdir": "test-ext", "size_gb": 15.0, "format": "awq",
+         "status": "community-experimental", "hf_repo": "org/qwen36-awq",
+         "files": ["*.safetensors", "*.json"], "verify_glob": "*.safetensors",
+         "engine": "vllm", "kind": "main"}
+    w.update(over)
+    return w
+
+
+def _attach(root, slugs: dict, *, variants=None, tp_add=None):
+    """extends.d + composes + registry.local.json for slugs on the curated model.
+    slugs: {slug: (kwargs overrides, compose text, local compose rel)}."""
+    ext = {"schema_version": 1, "extends": CM,
+           "weights": variants if variants is not None else {EXT: _ext_variant()}}
+    if tp_add:
+        ext["valid_tp_add"] = tp_add
+    d = root / "scripts/lib/profiles-local/extends.d"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{CM}.yml").write_text(json.dumps(ext, indent=2), encoding="utf-8")
+    raw = {}
+    for slug, (over, text, rel) in slugs.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+        kw = {"model": CM, "weights_variant": EXT, "workload": "long-ctx-single",
+              "engine": "vllm-stable", "drafter": "qwen-mtp-builtin", "kv_format": "fp8_e4m3",
+              "tp": 2, "max_ctx": 131072, "max_num_seqs": 2, "mem_util": 0.92,
+              "compose_path": rel, "default_port": 20251, "kvcalc_key": "qwen3.6-27b:dual",
+              "status": "incubating", "status_note": "community entry"}
+        kw.update(over)
+        raw[slug] = kw
+    reg = root / "scripts/lib/profiles-local/registry.local.json"
+    reg.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+
+
+def _sibling(local_depth=False):
+    """The curated sibling compose; with local_depth, rewritten the way a working
+    LOCAL copy has to be (its relative mounts reach three directories further)."""
+    text = (REPO / SIBLING).read_text(encoding="utf-8")
+    if local_depth:
+        # Repo-level mounts first (6 → 9 levels), then the model's own patches,
+        # which the local copy must reach in the curated tree.
+        text = re.sub(r"(?<![./])(\.\./){6}", LOCAL_DEPTH, text)
+        text = re.sub(r"(?<![./])\.\./\.\./\.\./patches/",
+                      LOCAL_DEPTH + "models/qwen3.6-27b/vllm/patches/", text)
+    return text
+
+
+def _local_rel(dir_="vllm", quant=EXT, name="fp8-mtp.yml", topo="dual"):
+    return f"scripts/lib/profiles-local/composes/{CM}/{dir_}/compose/{topo}/{quant}/{name}"
+
+
+def _run_model(root, out, *extra, mid=CM, slugs=None):
+    spec = {"model_id": mid}
+    if slugs is not None:
+        spec["slugs"] = slugs
+    return _run_spec(root, out, spec, *extra)
+
+
+def _run_spec(root, out, spec, *extra):
+    f = root / "export-spec.json"
+    f.write_text(json.dumps(spec) + "\n", encoding="utf-8")
+    env = dict(os.environ)
+    env.pop("C3_ALLOW_CORE_PROMOTE", None)
+    return subprocess.run(
+        [sys.executable, str(REPO / "scripts/lib/profiles/export_pr.py"),
+         "--spec-file", str(f), "--root", str(root), "--out", str(out), *extra],
+        capture_output=True, text=True, encoding="utf-8", env=env)
+
+
+def _assert_clean_body(body: str, root: Path, out: Path):
+    # It is the contributor's PR: no machine paths, no AI attribution.
+    for leak in (str(root), str(out), "/home/", "/opt/", "/mnt/"):
+        assert leak not in body, leak
+    for attribution in ("Co-Authored-By", "Claude", "Generated with"):
+        assert attribution not in body, attribution
+    assert "## Export check" in body
+    assert "<prefix>/<name>" not in body and "<model id>" not in body
+
+
+class TestCuratedModelSlugs:
+    def test_case1_bundle_has_no_model_profile_and_a_weights_snippet(self, core_root, tmp_path):
+        slug = "vllm/qwen36-test-ext-dual"
+        _attach(core_root, {slug: ({}, _sibling(local_depth=True), _local_rel())})
+        out = tmp_path / "bundle"
+        res = _run_model(core_root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert not (out / "models" / f"{CM}.yml").exists()   # never the curated profile
+        comp = out / "models" / CM / "vllm/compose/dual" / EXT / "fp8-mtp.yml"
+        assert comp.exists()
+        snippet = (out / f"weights-snippet-{CM}.yaml").read_text(encoding="utf-8")
+        assert EXT in snippet and "org/qwen36-awq" in snippet
+        assert f"compose_path: models/{CM}/vllm/compose/dual/{EXT}/fp8-mtp.yml" in \
+            (out / "registry-entry.yaml").read_text(encoding="utf-8")
+        body = (out / "PR_BODY.md").read_text(encoding="utf-8")
+        assert "- [x] **Case 1:**" in body and "- [ ] **Case 2:**" in body
+        assert "## Case 2:" not in body and "## Case 3:" not in body
+        assert f"- **Slug(s):** `{slug}`" in body
+        assert "registered in `scripts/lib/profiles/engines/`" in body
+        _assert_clean_body(body, core_root, out)
+
+    def test_mounts_written_for_the_local_depth_are_rebased_and_reported(self, core_root, tmp_path):
+        slug = "vllm/qwen36-test-ext-dual"
+        _attach(core_root, {slug: ({}, _sibling(local_depth=True), _local_rel())})
+        out = tmp_path / "bundle"
+        res = _run_model(core_root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        text = (out / "models" / CM / "vllm/compose/dual" / EXT / "fp8-mtp.yml").read_text(encoding="utf-8")
+        # Exactly the curated sibling again: every mount points where it did in core.
+        assert text == _sibling(), "rebased compose differs from the curated sibling"
+        assert "mount rebased" in res.stdout
+        assert "Mounts re-pointed for the core location" in (out / "PR_BODY.md").read_text(encoding="utf-8")
+
+    def test_mounts_already_right_for_core_are_copied_as_written(self, core_root, tmp_path):
+        slug = "vllm/qwen36-test-ext-dual"
+        _attach(core_root, {slug: ({}, _sibling(), _local_rel())})
+        out = tmp_path / "bundle"
+        res = _run_model(core_root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        text = (out / "models" / CM / "vllm/compose/dual" / EXT / "fp8-mtp.yml").read_text(encoding="utf-8")
+        assert text == _sibling()
+        assert "mount rebased" not in res.stdout
+
+    def test_a_mount_that_resolves_nowhere_is_refused(self, core_root, tmp_path):
+        bad = _sibling().replace("../../../patches/froggeric-chat-template/",
+                                 "../../../patches/no-such-patch/")
+        _attach(core_root, {"vllm/qwen36-test-ext-dual": ({}, bad, _local_rel())})
+        res = _run_model(core_root, tmp_path / "bundle")
+        assert res.returncode == 3
+        assert "no-such-patch" in res.stderr and "resolves to nothing" in res.stderr
+        assert not (tmp_path / "bundle").exists()
+
+    def test_a_mount_into_the_gitignored_local_layer_is_refused(self, core_root, tmp_path):
+        # It exists on the contributor's machine, so it "resolves" here, and on no
+        # one else's: a curated compose must never point into profiles-local.
+        shared = core_root / "scripts/lib/profiles-local/engines.d/shared.jinja"
+        shared.parent.mkdir(parents=True, exist_ok=True)
+        shared.write_text("x\n", encoding="utf-8")
+        bad = _sibling().replace(
+            "../../../patches/froggeric-chat-template/chat_template.jinja",
+            LOCAL_DEPTH + "scripts/lib/profiles-local/engines.d/shared.jinja")
+        _attach(core_root, {"vllm/qwen36-test-ext-dual": ({}, bad, _local_rel())})
+        res = _run_model(core_root, tmp_path / "bundle")
+        assert res.returncode == 3, res.stdout
+        assert "shared.jinja" in res.stderr and "resolves to nothing" in res.stderr
+
+    def test_a_patch_only_the_local_layer_has_is_carried(self, core_root, tmp_path):
+        # The compose mounts a patch directory beside it in the local layer; core
+        # has none, so the bundle carries it to the same place in the curated tree.
+        new = _sibling().replace("../../../patches/froggeric-chat-template/",
+                                 "../../../patches/new-template/")
+        _attach(core_root, {"vllm/qwen36-test-ext-dual": ({}, new, _local_rel())})
+        patch = core_root / f"scripts/lib/profiles-local/composes/{CM}/vllm/patches/new-template"
+        patch.mkdir(parents=True)
+        (patch / "chat_template.jinja").write_text("{{ messages }}\n", encoding="utf-8")
+        out = tmp_path / "bundle"
+        res = _run_model(core_root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        carried = out / "models" / CM / "vllm/patches/new-template/chat_template.jinja"
+        assert carried.read_text(encoding="utf-8") == "{{ messages }}\n"
+        assert "carries models/qwen3.6-27b/vllm/patches/new-template/chat_template.jinja" in res.stdout
+
+    def test_case2_engine_new_to_the_model_names_its_existing_slugs(self, core_root, tmp_path):
+        # Every llama.cpp qwen3.6-27b slug in core is deprecated, so this is case 2.
+        slug = "llamacpp/qwen36-test-gguf-single"
+        compose = LLAMA_COMPOSE_TEXT.replace("llamacpp-my-model-dual", "llama-cpp-qwen36-test")
+        variants = {"test-gguf": _ext_variant(format="gguf", files=["*Q4_K_M.gguf"],
+                                              verify_glob="*.gguf", engine="llama-cpp")}
+        _attach(core_root, {slug: ({"engine": "llama-cpp-local", "weights_variant": "test-gguf",
+                                    "drafter": None, "kv_format": "q8_0", "tp": 1,
+                                    "kvcalc_key": None},
+                                   compose, _local_rel("llama-cpp", "test-gguf", "base.yml", "single"))},
+                variants=variants)
+        out = tmp_path / "bundle"
+        res = _run_model(core_root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        body = (out / "PR_BODY.md").read_text(encoding="utf-8")
+        assert "- [x] **Case 2:**" in body and "- [ ] **Case 1:**" in body
+        assert "## Case 2:" in body and "## Case 3:" not in body
+        assert "`vllm/dual`" in body          # the model's existing slug, from the registry
+        assert "`<slug>`" not in body
+        assert (out / "models" / CM / "llama-cpp/compose/single/test-gguf/base.yml").exists()
+        _assert_clean_body(body, core_root, out)
+
+    def test_compose_under_the_engine_id_moves_to_the_core_directory(self, core_root, tmp_path):
+        # catalog.sh register files composes under the engine ID; core keeps
+        # vllm-stable composes in vllm/.
+        _attach(core_root, {"vllm/qwen36-test-ext-dual":
+                            ({}, _sibling(local_depth=True), _local_rel("vllm-stable"))})
+        out = tmp_path / "bundle"
+        res = _run_model(core_root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert (out / "models" / CM / "vllm/compose/dual" / EXT / "fp8-mtp.yml").exists()
+
+    def test_slug_prefix_core_does_not_use_for_the_engine_is_refused(self, core_root, tmp_path):
+        _attach(core_root, {"vllm-stable/qwen36-test-ext-dual": ({}, _sibling(), _local_rel())})
+        res = _run_model(core_root, tmp_path / "bundle")
+        assert res.returncode == 3
+        assert "does not match the namespace implied by its compose path" in res.stderr
+        assert "vllm/…" in res.stderr
+
+    def test_new_variant_without_files_is_refused(self, core_root, tmp_path):
+        _attach(core_root, {"vllm/qwen36-test-ext-dual": ({}, _sibling(), _local_rel())},
+                variants={EXT: _ext_variant(files=None)})
+        res = _run_model(core_root, tmp_path / "bundle")
+        assert res.returncode == 3
+        assert f"weights.{EXT}: files must be a non-empty list" in res.stderr
+
+    def test_reusing_a_curated_variant_adds_no_snippet(self, core_root, tmp_path):
+        _attach(core_root, {"vllm/qwen36-test-ext-dual":
+                            ({"weights_variant": "autoround-int4"}, _sibling(),
+                             _local_rel(quant="autoround-int4", name="fp8-mtp-test.yml"))},
+                variants={})
+        out = tmp_path / "bundle"
+        res = _run_model(core_root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert not list(out.glob("weights-snippet-*.yaml"))
+
+    def test_overwriting_a_curated_compose_is_refused(self, core_root, tmp_path):
+        _attach(core_root, {"vllm/qwen36-test-ext-dual":
+                            ({"weights_variant": "autoround-int4"}, _sibling(),
+                             _local_rel(quant="autoround-int4"))}, variants={})
+        res = _run_model(core_root, tmp_path / "bundle")
+        assert res.returncode == 3
+        assert "already exists in the curated catalog" in res.stderr
+
+    def test_spec_slugs_limits_the_export(self, core_root, tmp_path):
+        a, b = "vllm/qwen36-test-ext-dual", "vllm/qwen36-test-ext-dual-b"
+        _attach(core_root, {a: ({}, _sibling(), _local_rel()),
+                            b: ({"default_port": 20252}, _sibling(),
+                                _local_rel(name="fp8-mtp-b.yml"))})
+        out = tmp_path / "bundle"
+        res = _run_model(core_root, out, slugs=[b])
+        assert res.returncode == 0, res.stderr + res.stdout
+        entry = (out / "registry-entry.yaml").read_text(encoding="utf-8")
+        assert f"{b}:" in entry and f"  {a}:\n" not in entry
+        res = _run_model(core_root, tmp_path / "b2", slugs=["vllm/nope"])
+        assert res.returncode == 3 and "not local slugs" in res.stderr
+
+
+# ── An engine only the local layer has (docs/ADDING_ENGINES.md) ─────────────
+
+ENG = "vllm-testfork"
+DIGEST = "ghcr.io/maintainer/vllm-testfork@sha256:" + "a" * 64
+
+
+def _engine_profile(**over) -> str:
+    lin = over.pop("lineage", {"relation": "fork", "base": "vllm", "base_version": "0.31.0",
+                               "source": "https://github.com/maintainer/vllm-testfork",
+                               "source_ref": "0123456789abcdef0123456789abcdef01234567"})
+    spec = over.pop("spec", DIGEST)
+    method = over.pop("method", "docker_image")
+    lines = ["schema_version: 1", f"id: {ENG}", "display_name: vLLM test fork", "type: vllm",
+             "stability: experimental", "min_sm: 8.0", "image_env: VLLM_TESTFORK_IMAGE",
+             "install:", f"  method: {method}", f"  spec: {spec}",
+             "supported_kv_formats:", "  - fp8_e4m3"]
+    if lin is not None:
+        lines += ["lineage:"] + [f"  {k}: {json.dumps(v)}" for k, v in lin.items()]
+    return "\n".join(lines) + "\n"
+
+
+def _seed_engine(root, **over):
+    d = root / "scripts/lib/profiles-local/engines.d"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{ENG}.yml").write_text(_engine_profile(**over), encoding="utf-8")
+
+
+class TestEngineExport:
+    def _slug_on_fork(self, root):
+        compose = _sibling(local_depth=True).replace("vllm-qwen36-27b-dual", "vllm-qwen36-testfork")
+        _attach(root, {"vllm/qwen36-testfork-dual": ({"engine": ENG}, compose,
+                                                     _local_rel(ENG))})
+
+    def test_engine_bundle_with_its_first_slug(self, core_root, tmp_path):
+        _seed_engine(core_root)
+        self._slug_on_fork(core_root)
+        # A slug on a model core doesn't have rides in a later PR.
+        _seed_local(core_root, entry_kwargs=dict(_entry_kwargs(), engine=ENG,
+                                                 compose_path=LOCAL_COMPOSE_REL.replace("/vllm/", f"/{ENG}/")),
+                    slug=f"vllm/{MID}-testfork")
+        out = tmp_path / "bundle"
+        res = _run_spec(core_root, out, {"engine_id": ENG})
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert (out / "scripts/lib/profiles/engines" / f"{ENG}.yml").read_text(encoding="utf-8") \
+            == _engine_profile()
+        assert (out / "models" / CM / ENG / "compose/dual" / EXT / "fp8-mtp.yml").exists()
+        body = (out / "PR_BODY.md").read_text(encoding="utf-8")
+        assert f"- **Engine id:** `{ENG}`" in body
+        assert "relation `fork` · base `vllm 0.31.0`" in body
+        assert f"- **Image:** `{DIGEST}`" in body
+        assert "`vllm/qwen36-testfork-dual`" in body
+        assert f"`vllm/{MID}-testfork`" in body and "left out" in body
+        # image_env isn't allowlisted in the launchers yet: listed, not refused.
+        assert "VLLM_TESTFORK_IMAGE" in body and "export_variant_engine_pin" in body
+        assert not (out / "models" / f"{MID}.yml").exists()
+        _assert_clean_body(body, core_root, out)
+
+    def test_engine_without_lineage_names_the_fields(self, core_root, tmp_path):
+        _seed_engine(core_root, lineage=None)
+        res = _run_spec(core_root, tmp_path / "bundle", {"engine_id": ENG})
+        assert res.returncode == 3
+        assert "engine-lineage" in res.stderr and "source_ref" in res.stderr
+
+    def test_fork_on_a_tag_is_refused(self, core_root, tmp_path):
+        _seed_engine(core_root, spec="ghcr.io/maintainer/vllm-testfork:v1")
+        res = _run_spec(core_root, tmp_path / "bundle", {"engine_id": ENG})
+        assert res.returncode == 3
+        assert "image-pin" in res.stderr and "digest" in res.stderr
+
+    def test_method_docker_is_refused(self, core_root, tmp_path):
+        _seed_engine(core_root, method="docker")
+        res = _run_spec(core_root, tmp_path / "bundle", {"engine_id": ENG})
+        assert res.returncode == 3
+        assert "install.method must be docker_image" in res.stderr
+
+    def test_catalog_sh_leftovers_are_listed_to_fix(self, core_root, tmp_path):
+        _seed_engine(core_root)
+        p = core_root / "scripts/lib/profiles-local/engines.d" / f"{ENG}.yml"
+        p.write_text(p.read_text(encoding="utf-8").replace(
+            "display_name: vLLM test fork",
+            "display_name: vllm-testfork (local, registered from a compose)")
+            + "notes: >\n  Registered by catalog.sh from x.yml.\n", encoding="utf-8")
+        self._slug_on_fork(core_root)
+        out = tmp_path / "bundle"
+        res = _run_spec(core_root, out, {"engine_id": ENG})
+        assert res.returncode == 0, res.stderr + res.stdout
+        body = (out / "PR_BODY.md").read_text(encoding="utf-8")
+        assert "real display_name" in body and "catalog.sh `notes:`" in body
+
+    def test_engine_file_already_in_core_is_refused(self, core_root, tmp_path):
+        _seed_engine(core_root)
+        (core_root / "scripts/lib/profiles/engines" / f"{ENG}.yml").write_text(
+            "# placeholder with another id\nid: something-else\n", encoding="utf-8")
+        res = _run_spec(core_root, tmp_path / "bundle", {"engine_id": ENG})
+        assert res.returncode == 3 and "already exists in the curated catalog" in res.stderr
+
+    def test_curated_engine_is_refused(self, core_root, tmp_path):
+        res = _run_spec(core_root, tmp_path / "bundle", {"engine_id": "vllm-stable"})
+        assert res.returncode == 3 and "already curated" in res.stderr
+
+    def test_spec_names_exactly_one_target(self, core_root, tmp_path):
+        res = _run_spec(core_root, tmp_path / "bundle", {"engine_id": ENG, "model_id": CM})
+        assert res.returncode == 3 and "exactly one of model_id or engine_id" in res.stderr
+
+
+class TestPrBody:
+    def test_case3_body_ticks_case3_and_keeps_its_section(self, root, tmp_path):
+        _seed_local(root)
+        out = tmp_path / "bundle"
+        res = _run_cli(root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        body = (out / "PR_BODY.md").read_text(encoding="utf-8")
+        assert "- [x] **Case 3:**" in body and "## Case 3:" in body
+        assert "## Case 2:" not in body
+        assert f"- **Model:** `{MID}`" in body
+        assert "Network rules not run" in body and "export again with `--network`" in body
+        _assert_clean_body(body, root, out)
+
+    def test_template_drift_fails_loudly(self, root, tmp_path):
+        _seed_local(root)
+        tpl = root / ".github/PULL_REQUEST_TEMPLATE/slug.md"
+        tpl.write_text(tpl.read_text(encoding="utf-8").replace("- **Model:**", "- **The model:**"),
+                       encoding="utf-8")
+        res = _run_cli(root, tmp_path / "bundle")
+        assert res.returncode == 2
+        assert "- **Model:**" in res.stderr and "template" in res.stderr
+        assert not (tmp_path / "bundle").exists()
