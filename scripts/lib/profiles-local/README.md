@@ -189,8 +189,8 @@ your work is validated here, one command turns it into a ready-to-commit PR
 bundle — nothing in the repo is touched, output lands only under `--out`:
 
 ```bash
-python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check --network          # validate only, writes nothing
-python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --network --out ./bundle   # write the bundle
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check --network               # validate only, writes nothing
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --network --out ~/pr-bundle-<id>   # write the bundle, outside the checkout
 ```
 
 The spec is `{"model_id": "<id>"}` for a model in `models.d/` (a new model) or for
@@ -206,5 +206,6 @@ required profile and registry fields, the required catalog rules, and with
 names and re-run. The full walkthrough, case by case, is
 [docs/BRING_YOUR_OWN.md](../../../docs/BRING_YOUR_OWN.md) §5.
 
-In the cockpit this is the **`E` — Export as PR bundle** action on the same
-Promote screen (`⏎ Write LOCAL layer · C WRITE CORE REGISTRY · E Export as PR bundle`).
+In the cockpit, a new model exports with the **`E` — Export as PR bundle** action on
+the same Promote screen (`⏎ Write LOCAL layer · C WRITE CORE REGISTRY · E Export as PR bundle`).
+Slugs attached to a curated model and engines are command-line only for now.

@@ -434,9 +434,10 @@ A new engine's PR carries its first slugs on a model we already serve; slugs on 
 we don't have go in a model PR after it, so the engine export leaves them out and says so.
 
 ```bash
-echo '{"model_id": "<id>"}' > spec.json        # or {"engine_id": "<id>"}; add "slugs": [...] to send only some
-python3 scripts/lib/profiles/export_pr.py --spec-file spec.json --check --network              # validate, write nothing
-python3 scripts/lib/profiles/export_pr.py --spec-file spec.json --network --out ./bundle       # write the bundle
+B=~/pr-bundle-<id>                        # outside any checkout: the PR branch lives in another one
+mkdir -p "$B" && echo '{"model_id": "<id>"}' > "$B.json"   # or {"engine_id": "<id>"}; "slugs": [...] sends only some
+python3 scripts/lib/profiles/export_pr.py --spec-file "$B.json" --check --network            # validate, write nothing
+python3 scripts/lib/profiles/export_pr.py --spec-file "$B.json" --network --out "$B"         # write the bundle
 ```
 
 **What it checks.** It refuses (exit 3, nothing written) on anything a maintainer would
@@ -484,12 +485,12 @@ bounce the PR for:
      `extends.d` file that repeats a curated weights variant stops the profile loader.
    - Settings and compile caches are shared. So are your weights, if `MODEL_DIR` points outside
      the checkout (`bash scripts/settings.sh show`).
-2. Copy the bundle's `models/` (and `scripts/`, for an engine) into the repo.
-3. Merge `registry-entry.yaml` with the command in its header.
-4. Paste `weights-snippet-<id>.yaml` under `weights:` in `scripts/lib/profiles/models/<id>.yml`, if the bundle has one.
+2. Copy `$B/models/` (and `$B/scripts/`, for an engine) into the repo: `cp -r "$B/models" .`
+3. Merge `$B/registry-entry.yaml` with the command in its header.
+4. Paste `$B/weights-snippet-<id>.yaml` under `weights:` in `scripts/lib/profiles/models/<id>.yml`, if the bundle has one.
 5. Run `bash scripts/preflight-add-model.sh <slug>`. The slug is curated on that branch, so the rules are required now.
 6. Run the full `scripts/tests` suite.
-7. Open the PR with `gh pr create --body-file bundle/PR_BODY.md`, then fill in its Evidence section.
+7. Open the PR with `gh pr create --body-file "$B/PR_BODY.md"`, then fill in its Evidence section.
 
 Not coming from the local layer? Open the PR with the template (`?template=slug.md` or
 `?template=engine.md` on the compare URL), and paste
