@@ -25,9 +25,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
+
+try:  # package context
+    from scripts.lib.profiles import compose_header
+except ImportError:  # direct-script context: this directory is on sys.path
+    import compose_header
 
 _DEFAULT_ROOT = Path(__file__).resolve().parents[3]
 _LOCAL_REGISTRY_REL = "scripts/lib/profiles-local/registry.local.json"
@@ -248,6 +254,27 @@ def _reload_error(root: Path) -> Optional[str]:
     return None if chk.returncode == 0 else (chk.stderr.strip() or chk.stdout.strip())[-800:]
 
 
+def _header_for_status(root: Path, entry: dict[str, Any], status: str) -> Optional[tuple[Path, str]]:
+    """(compose path, new text) when the entry's compose header must change to say
+    `status`, else None. A compose with no profile header is left alone. A status
+    that needs a Caveats line gets one when the header has none: the status_note, or
+    a placeholder asking for the reason."""
+    path = root / str(entry.get("compose_path") or "")
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    if compose_header.status_value(text) is None or compose_header.says(text, status):
+        return None
+    caveats = None
+    if status in compose_header.NEEDS_CAVEATS and not compose_header.has_caveats(text):
+        caveats = entry.get("status_note") or (
+            f"set to {status} with catalog.sh update; say why here before exporting")
+    try:
+        return path, compose_header.set_status(text, compose_header.LABELS[status], caveats)
+    except compose_header.HeaderError:
+        return None
+
+
 def do_update(root: Path, slug: str, edits: dict[str, Any], *,
               dry_run: bool = False) -> dict[str, Any]:
     raw = _require_local(root, slug)
@@ -268,7 +295,13 @@ def do_update(root: Path, slug: str, edits: dict[str, Any], *,
     notes = _validate_entry(root, slug, entry, edits)
     for n in notes:
         print(f"[amend] note: {n}")
+    # The compose header carries the status too (test-compose-status-drift compares the
+    # two once the slug is exported), so a status change rewrites its Status line.
+    header = _header_for_status(root, entry, edits["status"]) if edits.get("status") else None
     if dry_run:
+        if header:
+            print(f"[amend] would set {header[0].name}'s header Status to "
+                  f"{compose_header.LABELS[edits['status']]}")
         return {"slug": slug, "before": before, "after": edits}
     reg = root / _LOCAL_REGISTRY_REL
     old_text = reg.read_text(encoding="utf-8")
@@ -278,6 +311,16 @@ def do_update(root: Path, slug: str, edits: dict[str, Any], *,
     if err:
         reg.write_text(old_text, encoding="utf-8")
         raise Refusal(f"the catalog no longer loads with this change, so it was put back:\n{err}")
+    if header:
+        path, text = header
+        tmp = path.with_name(path.name + ".amend.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError as exc:
+            reg.write_text(old_text, encoding="utf-8")
+            raise Refusal(f"could not rewrite {path.name}'s header ({exc}); the entry was put back")
+        print(f"[amend] {path.name}: header Status -> {compose_header.LABELS[edits['status']]}")
     for k in sorted(edits):
         print(f"[amend] {slug}: {k}: {before[k]!r} -> {edits[k]!r}")
     return {"slug": slug, "before": before, "after": edits}

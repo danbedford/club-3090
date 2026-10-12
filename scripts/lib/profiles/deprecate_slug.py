@@ -60,9 +60,10 @@ LITELLM_REL = "services/litellm/config.yaml"
 GATE_ENV = "C3_ALLOW_CORE_PROMOTE"
 EXIT_REFUSED, EXIT_INTERNAL = 3, 2
 
-# A schema field line: `#` + 1-4 spaces + `Key:`. Continuation lines are indented
-# deeper or don't look like a key, so a field never swallows the next one.
-_KEY = re.compile(r"^#(\s{1,4})([A-Z][A-Za-z0-9 ._()/-]*?):(\s|$)")
+try:  # package context (the tests)
+    from scripts.lib.profiles import compose_header
+except ImportError:  # run as a script: this directory is on sys.path
+    import compose_header
 
 
 class Refusal(Exception):
@@ -77,71 +78,22 @@ def _info(msg: str = "") -> None:
     print(f"[deprecate] {msg}" if msg else "")
 
 
-# ── compose header ────────────────────────────────────────────────────────────
+# ── compose header (shared with catalog.sh register / update: compose_header.py) ──
 
-def _schema_span(lines: list[str]) -> Optional[tuple[int, int]]:
-    """[start, end) of the `# Profile (at-a-glance):` block, bounded the way
-    compose_header_status reads it (up to the `# --` separator)."""
-    start = None
-    for i, ln in enumerate(lines):
-        s = ln.strip()
-        if start is None:
-            if s.startswith("# Profile (at-a-glance):"):
-                start = i + 1
-            continue
-        if s.startswith("# --") or s.startswith("#--"):
-            return start, i
-    return None if start is None else (start, len(lines))
-
-
-def _fields(lines: list[str], start: int, end: int) -> list[tuple[str, int, int]]:
-    """(name, first line, end line) per field; the range covers its continuations."""
-    out = []
-    i = start
-    while i < end:
-        m = _KEY.match(lines[i])
-        if not m:
-            i += 1
-            continue
-        j = i + 1
-        while (j < end and lines[j].startswith("#") and lines[j].lstrip("#").strip()
-               and not _KEY.match(lines[j])):
-            j += 1
-        out.append((m.group(2), i, j))
-        i = j
-    return out
+_schema_span = compose_header.schema_span
+_fields = compose_header.fields
 
 
 def rewrite_header(text: str, reason: str, status_token: str) -> str:
-    """The compose text with Status → `status_token` and Caveats → `reason`.
+    """The compose text with Status → `status_token` and the first Caveats field
+    replaced by `reason` (added after Status when there is none).
 
     Pure: the test runs it over every curated compose. Raises HeaderError when
     there is no profile block or not exactly one Status field in it."""
-    lines = text.splitlines(keepends=True)
-    span = _schema_span(lines)
-    if span is None:
-        raise HeaderError("the compose has no `# Profile (at-a-glance):` header block")
-    fields = _fields(lines, *span)
-    status = [f for f in fields if f[0] == "Status"]
-    if len(status) != 1:
-        raise HeaderError(f"the profile header has {len(status)} Status fields, expected 1")
-    _, s0, s1 = status[0]
-    head = re.match(r"^(#\s*)Status:\s*", lines[s0])
-    indent, col = head.group(1), len(head.group(0))
-    eol = "\r\n" if lines[s0].endswith("\r\n") else "\n"
-    status_line = f"{head.group(0)}{status_token}{eol}"
-    label = f"{indent}Caveats:"
-    caveats_line = f"{label}{' ' * max(1, col - len(label))}{reason}{eol}"
-    caveats = [f for f in fields if f[0] == "Caveats"]
-    if caveats:
-        _, c0, c1 = caveats[0]
-        edits = [(s0, s1, [status_line]), (c0, c1, [caveats_line])]
-    else:
-        edits = [(s0, s1, [status_line, caveats_line])]
-    out = lines[:]
-    for a, b, repl in sorted(edits, reverse=True):
-        out[a:b] = repl
-    return "".join(out)
+    try:
+        return compose_header.set_status(text, status_token, reason, replace_caveats=True)
+    except compose_header.HeaderError as e:
+        raise HeaderError(str(e)) from e
 
 
 # ── registry ──────────────────────────────────────────────────────────────────

@@ -89,6 +89,23 @@ before="$(sha256sum "$L/registry.local.json")"
 out="$(cat_ update --slug "$ATT" --set status=bogus)"; code=$?
 [[ $code -eq 3 && "$out" == *"would not load"* && "$(sha256sum "$L/registry.local.json")" == "$before" ]] \
   && ok "an invalid status is refused before the write" || fail "invalid status (rc=$code): $out"
+# the compose header carries the status too (status-drift compares them once exported)
+hdr() { (cd "$R" && python3 -c "
+import sys
+from scripts.lib.profiles.compose_registry import compose_header_status, get_registry
+e = get_registry()[sys.argv[1]]
+print(compose_header_status(open(e['compose_path'], encoding='utf-8').read()))" "$1" 2>&1 | command grep -v '^\[compat\]'); }
+[[ "$(hdr "$ATT")" == "incubating" ]] && ok "register wrote the copied compose's header as incubating, like the entry" \
+  || fail "header after register: $(hdr "$ATT")"
+out="$(bash scripts/catalog.sh update --slug "$ATT" --set status=experimental --dry-run --root "$R" 2>&1)"; code=$?
+[[ $code -eq 0 && "$out" == *"would set"*"header Status to 🧪 Experimental"* && "$(hdr "$ATT")" == "incubating" ]] \
+  && ok "update --dry-run reports the header change and writes nothing" || fail "dry-run header (rc=$code): $out"
+out="$(cat_ update --slug "$ATT" --set status=experimental)"; code=$?
+[[ $code -eq 0 && "$(entry "$ATT" status)" == "experimental" && "$(hdr "$ATT")" == "experimental" \
+   && "$out" == *"header Status -> 🧪 Experimental"* ]] \
+  && ok "update --set status rewrites the compose header to match" || fail "status header (rc=$code): $out / $(hdr "$ATT")"
+cat_ update --slug "$ATT" --set status=incubating >/dev/null
+[[ "$(hdr "$ATT")" == "incubating" ]] && ok "and back again" || fail "header after resetting: $(hdr "$ATT")"
 
 # 2. list
 out="$(list_)"

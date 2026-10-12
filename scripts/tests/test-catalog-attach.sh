@@ -71,6 +71,14 @@ if [[ $code -eq 0 && "$out" == *"PROMOTE_OK $SLUG"* ]]; then
 else fail "new variant (rc=$code): $out"; fi
 [[ ! -e "$R/scripts/lib/profiles-local/models.d/$CM.yml" ]] && ok "no models.d profile for a curated model" \
   || fail "a models.d/$CM.yml was written"
+LC="$R/scripts/lib/profiles-local/composes/$CM/vllm/compose/dual/own-awq/base.yml"
+res="$(py "$R" "
+from scripts.lib.profiles.compose_registry import compose_header_status
+t = open('$LC', encoding='utf-8').read()
+print(compose_header_status(t), 'registered in the local layer' in t, 'MTP drafter exposed to OPEN vllm#50021' in t)")"
+[[ "$res" == "incubating True True" ]] \
+  && ok "the copied compose's header says incubating, like the entry, and keeps the sibling's own Caveats" \
+  || fail "local compose header: $res"
 [[ -f "$R/scripts/lib/profiles-local/composes/$CM/vllm/compose/dual/own-awq/base.yml" ]] \
   && ok "compose filed where core keeps vllm-stable composes (vllm/)" || fail "compose not under composes/$CM/vllm/"
 res="$(py "$R" "
