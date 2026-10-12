@@ -62,7 +62,8 @@ the whole.
 |---|---|
 | [`PATCH_POLICY.md`](PATCH_POLICY.md) | When/how a patch ships, the local-overlay vs upstream rules. |
 | [`PATCH_ATTRIBUTION.md`](PATCH_ATTRIBUTION.md) | The Phase-A patch-attribution matrix — arch → engine-pin → required patches. |
-| [`ADDING_MODELS.md`](ADDING_MODELS.md) | How a new model gets added to the curated catalog. |
+| [`ADDING_MODELS.md`](ADDING_MODELS.md) | How a new model or slug gets added to the curated catalog, and which of the three slug cases a change is. |
+| [`ADDING_ENGINES.md`](ADDING_ENGINES.md) | How a new inference engine gets added: proposal, lineage, image provenance, the engine profile, and wiring it into the tooling. |
 | [`KV_MATH.md`](KV_MATH.md) | The KV-cache math the `[B]` fit verdict is computed from. |
 
 ### Stack reference & ops

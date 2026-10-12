@@ -135,7 +135,7 @@ A few principles the repo follows:
 1. **No tutorials disguised as configs.** Composes are working configs, not pedagogy. Configs reference docs for the "why."
 2. **Honest framing always.** If a config has a known cliff, the cliff is documented at the top of the relevant doc, not buried in a footnote. Users discovering issues at boot should already have read the warning.
 3. **Cross-rig data welcome.** TPS numbers are run-to-run variable; we publish ours and welcome PRs adding "your rig" rows.
-4. **Patches stay surgical.** We don't fork engines. Disk-edits at boot, runtime monkey-patches, or volume-mounts of patched source. When upstream lands a fix, the patch becomes a no-op (anchor doesn't match) and we drop it cleanly.
+4. **Patches stay surgical.** We don't fork an engine to carry our patches. Ours are disk-edits at boot, runtime monkey-patches, or volume-mounts of patched source onto the pinned image. When upstream lands a fix, the patch becomes a no-op (anchor doesn't match) and we drop it cleanly. A fork maintained as its own project can still be a catalog engine, registered with its lineage, its public source and its own engine profile (`llamacpp-club3090`, `llama-cpp-prism`); see [ADDING_ENGINES.md](ADDING_ENGINES.md).
 5. **Verification gates production.** `verify-full.sh` runs 8 fast functional checks; `verify-stress.sh` runs the heavy boundary-case tests (long-context needle ladder, ~25K-token tool-response prefill OOM detection). We don't claim a config works until both are green.
 6. **Document the negative results too.** Probes that didn't pan out (PR #40798 backport, `--enforce-eager` mode) are documented so future-us doesn't redo the experiments.
 
