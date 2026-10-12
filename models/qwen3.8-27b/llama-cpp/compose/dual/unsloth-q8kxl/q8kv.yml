@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Unsloth Dynamic UD-Q8_K_XL GGUF, 31.5 GB)
-#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec)
 #   Topology:  Dual 3090 PCIe (layer-split, -sm layer -ts 0.55,0.45 — no NVLink, no
 #              all-reduce; the skew rebalances the pinned MTP draft card, see TOPOLOGY)
 #   Drafter:   MTP n=2 built-in (--spec-type draft-mtp; the head is EMBEDDED in this GGUF)

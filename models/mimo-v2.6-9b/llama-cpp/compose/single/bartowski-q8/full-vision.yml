@@ -7,7 +7,7 @@
 #              has NO PLE / n-gram table, so there is no 31 GB host-RAM tax.
 #   Quant:     bartowski Q8_0 (8.89 GiB) + mmproj-f16 (0.86 GiB).
 #              ⛔ DO NOT USE ggml-org/MiMo-V2.6-Distill-Qwen-9B-GGUF — see Caveats.
-#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec)
 #   Topology:  SINGLE 3090. GPU1 stays free — TP is unnecessary for a 9B and would
 #              pay a PCIe all-reduce per layer on this NVLink-less rig.
 #   Spec-dec:  ⛔ OFF by default, on two separate grounds.

@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-35B-A3B-Uncensored-HauhauCS (morikomorizz Q6_K_P MTP GGUF)
-#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec; draft-mtp)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec; draft-mtp)
 #   Topology:  Dual 3090 (layer-split -ts 0.55,0.45 — rebalances the MTP draft card)
 #   Drafter:   MTP n=3 (--spec-type draft-mtp; embedded nextn head, 1 layer)
 #              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables

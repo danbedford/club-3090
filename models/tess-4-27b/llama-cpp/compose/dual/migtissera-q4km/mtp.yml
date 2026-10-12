@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Tess-4-27B (Qwen3.5-based dense 27B, migtissera Q4_K_M GGUF)
-#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec; external draft-mtp)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec; external draft-mtp)
 #   Topology:  Dual 3090 (layer-split -ts 1,1)
 #   Drafter:   MTP n=2 external (n-sweep sweet spot 2026-07-09) — --spec-draft-model mtp-Tess-*.gguf + --spec-type draft-mtp
 #              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables

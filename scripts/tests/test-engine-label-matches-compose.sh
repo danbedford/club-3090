@@ -15,11 +15,11 @@
 #   (1) SKIP deprecated entries. Retired engines legitimately keep stale pins as
 #       history (7 beellama slugs + 1 deprecated vLLM one drift this way today);
 #       failing on them would make the gate permanently red for no benefit.
-#   (2) SKIP engines whose profile declares NO `install.spec`. That is by design
-#       for ik-llama and llama-cpp-local — registry-emit.sh: "no docker-image
-#       install.spec (ik / llama.cpp pin per-compose or roll by policy)". There
-#       is nothing to compare against, and treating absence as a mismatch would
-#       red every one of those entries.
+#   (2) SKIP engines whose profile declares NO `install.spec`: there is nothing
+#       to compare against. (Until 2026-10-12 this also skipped every
+#       llama-cpp-local slug, which does declare one: the lookup goes by filename
+#       and the profile was named llama-cpp-mainline.yml. Renamed to
+#       llama-cpp-local.yml, its 12 live slugs are checked now.)
 #   (3) Otherwise the compose's first `image:` default must EQUAL the profile
 #       spec.
 #
@@ -61,6 +61,19 @@ IMG = re.compile(r"^\s*image:\s*[\"']?(?:\$\{[A-Z_0-9]+:-)?([^\s}\"']+)\}?", re.
 # Statuses that are historical rather than live. A retired engine keeping a
 # stale pin is a record, not a defect.
 SKIP_STATUS = {"deprecated"}
+
+# Live slugs whose label is known to be wrong. SHRINK ONLY: the fix is an engine
+# profile for what they run, not a longer list, and an entry that matches again
+# (or no longer exists) fails until it's removed.
+_NO_IK_PROFILE = ("runs ik_llama.cpp, but there is no ik-llama engine profile, so every "
+                  "ik-llama/ slug is labelled llama-cpp-local. Serving is unaffected: that "
+                  "profile's image_env is null, nothing is injected, and the compose's own "
+                  "image runs")
+KNOWN_MISLABELLED = {
+    "ik-llama/ornith35b-dual": _NO_IK_PROFILE,
+    "ik-llama/ornith9b-single": _NO_IK_PROFILE,
+}
+known_seen = set()
 
 failures = []
 checked = skipped_status = skipped_nospec = 0
@@ -115,6 +128,10 @@ for slug, entry in sorted(get_registry().items()):
     checked += 1
     if compose_img == spec:
         continue
+    if slug in KNOWN_MISLABELLED:
+        known_seen.add(slug)
+        print(f"NOTE: {slug}: label {engine!r} is known to be wrong — {KNOWN_MISLABELLED[slug]}")
+        continue
 
     if engine.startswith("vllm"):
         why = (
@@ -131,6 +148,10 @@ for slug, entry in sorted(get_registry().items()):
         f"{slug}: engine label {engine!r} declares {spec!r} but the compose pins "
         f"{compose_img!r} — {why}",
     )
+
+for slug in sorted(set(KNOWN_MISLABELLED) - known_seen):
+    check(False, f"{slug} is in KNOWN_MISLABELLED but no longer mismatches (or is gone): "
+                 f"remove it from the list")
 
 print(
     f"\nchecked {checked} entries "
