@@ -46,6 +46,16 @@ local layer used. A relative mount is copied as written when it resolves from
 the core location; one written for the local layer's depth (three directories
 deeper) is re-pointed at the same target and reported, never silently.
 
+``--apply --into <checkout>`` (maintainer-gated: C3_ALLOW_CORE_PROMOTE=1) also
+puts the bundle into another club-3090 checkout, on the PR branch: the new files,
+registry-entry.yaml merged with the command inside it (run in that checkout), the
+weights snippet added to the curated model profile as text (its comments stay),
+and test-compose-registry-disk's counts raised. It refuses this same checkout (the
+local copies would then define each new variant twice), a target with
+uncommitted changes, and anything already there; checks that the target's
+catalog loads, puts the target back if not, and runs the fast catalog guards
+there. --dry-run prints what it would change.
+
 Refusals (exit 3, nothing written): what a maintainer would bounce the PR for,
 the required catalog rules (catalog_rules.py; --network adds the Hugging Face
 download and the anonymous image pull), and anything that would overwrite
@@ -60,6 +70,8 @@ import datetime
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -84,6 +96,7 @@ _MODEL_ID_RE = _ID_RE
 
 EXIT_COLLISION = 3   # refusal — nothing written
 EXIT_INTERNAL = 2
+_CORE_GATE_ENV = "C3_ALLOW_CORE_PROMOTE"   # --apply writes a curated catalog (promote.py's gate)
 
 NEW_MODEL, CORE_MODEL = "new-model", "core-model"
 
@@ -98,6 +111,11 @@ class TemplateDrift(Exception):
 
 def _info(msg: str) -> None:
     print(f"[export-pr] {msg}")
+
+
+def _git(target: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(target), *args], capture_output=True, text=True,
+                          encoding="utf-8")
 
 
 def _is_real_str(v: Any) -> bool:
@@ -1025,12 +1043,15 @@ def build(root: Path, *, model_states: list[dict], engine: Optional[dict], netwo
     return files, notes, gaps
 
 
-def plan_lines(out: Path, files: dict[str, Any], notes: list[str]) -> list[str]:
+def plan_lines(out: Path, files: dict[str, Any], notes: list[str],
+               into: Optional[Path] = None) -> list[str]:
     lines = [f"plan (CORE PR bundle → {out}):"]
     lines += [f"  write {out / rel}" for rel in files]
     lines += [f"  {n}" for n in notes]
-    lines.append("  NOTHING in this repo is touched — copy the bundle onto your PR branch "
-                 "and merge registry-entry.yaml (command inside the file).")
+    lines.append("  NOTHING in this repo is touched — " + (
+        f"--apply puts the bundle into {into}." if into else
+        "copy the bundle onto your PR branch and merge registry-entry.yaml (command inside "
+        "the file)."))
     return lines
 
 
@@ -1069,6 +1090,348 @@ def _apply_model_spec(spec: dict) -> dict:
     return spec
 
 
+# ── --apply: put the bundle into a checkout ─────────────────────────────────
+#
+# What a maintainer does with a bundle, done by the tool: copy the new files,
+# merge registry-entry.yaml with the command inside it (run IN the target, so the
+# target's own loader writes its registry), add the weights snippet to the
+# curated model profile as text, and bump the compose count the disk guard pins.
+# The target is a separate checkout on a PR branch: applying into the checkout
+# whose local layer the bundle came from would leave each new variant defined
+# twice (local extends.d and core), which the loader refuses.
+
+_DISK_TEST_REL = "scripts/tests/test-compose-registry-disk.sh"
+_DISK_ENTRIES = re.compile(r'(len\(COMPOSE_REGISTRY\) == )(\d+)(, f"registry expects )(\d+)( entries)')
+_DISK_FILES = re.compile(r'(len\(disk_paths\) == )(\d+)(, f"disk expects )(\d+)( compose files)')
+APPLY_GUARDS = ("test-compose-registry-disk", "test-compose-status-drift",
+                "test-compose-mounts-resolve", "test-model-weights-registry")
+
+_APPLY_CHECK = r"""
+import json, sys
+from scripts.lib.profiles.compat import load_profiles
+from scripts.lib.profiles.compose_registry import get_registry
+slugs = json.loads(sys.argv[1])
+p = load_profiles(); r = get_registry()
+for s in slugs:
+    e = r.get(s)
+    if e is None or e.get("origin") != "core":
+        sys.exit(f"{s}: not a core entry after the merge")
+    if e["weights_variant"] not in p.models[e["model"]].weights:
+        sys.exit(f"{s}: models/{e['model']}.yml has no weights variant {e['weights_variant']!r}")
+print("ok")
+"""
+
+
+def _target_rel(rel: str) -> str:
+    """Bundle path → checkout path. Only the model profile differs: the bundle
+    keeps it beside its compose tree as models/<id>.yml."""
+    if re.fullmatch(r"models/[^/]+\.yml", rel):
+        return f"{_CORE_MODELS_REL}/{rel.split('/', 1)[1]}"
+    return rel
+
+
+def _is_compose_file(rel: str) -> bool:
+    """The shape test-compose-registry-disk counts: models/*/*/compose/*/*/*.yml."""
+    parts = rel.split("/")
+    return len(parts) == 7 and parts[0] == "models" and parts[3] == "compose" \
+        and rel.endswith(".yml")
+
+
+def _indented_dumper():
+    yaml = _yaml()
+
+    class Indented(yaml.SafeDumper):   # lists indented under their key, like the curated files
+        def increase_indent(self, flow=False, indentless=False):
+            return super().increase_indent(flow, False)
+    return Indented
+
+
+def _merge_valid_tp(text: str, add: list[int]) -> str:
+    flow = re.search(r"(?m)^valid_tp:[ \t]*\[([^\]\n]*)\]", text)
+    if flow:
+        vals = sorted({int(x) for x in flow.group(1).split(",") if x.strip()} | set(add))
+        return text[:flow.start()] + f"valid_tp: [{', '.join(map(str, vals))}]" + text[flow.end():]
+    block = re.search(r"(?m)^valid_tp:[ \t]*(?:#.*)?\n((?:[ \t]+-[ \t]*\d+[ \t]*(?:#.*)?\n)+)", text)
+    if not block:
+        raise Refusal("valid_tp is in a form this tool can't edit; add "
+                      f"{', '.join(map(str, add))} by hand")
+    items = block.group(1).splitlines(keepends=True)
+    indent = re.match(r"^([ \t]+)-", items[0]).group(1)
+    have = {int(re.search(r"-\s*(\d+)", ln).group(1)) for ln in items}
+    if any("#" in ln for ln in items):      # keep commented items as written; append
+        new = block.group(1) + "".join(f"{indent}- {v}\n" for v in sorted(set(add) - have))
+    else:
+        new = "".join(f"{indent}- {v}\n" for v in sorted(have | set(add)))
+    return text[:block.start(1)] + new + text[block.end(1):]
+
+
+def insert_weights(text: str, variants: dict, tp_add: list[int]) -> str:
+    """The curated model profile with ``variants`` appended to its ``weights:``
+    block and ``tp_add`` merged into ``valid_tp`` — edited as TEXT, because a
+    YAML round trip drops every comment in the file. The result is re-parsed and
+    must differ from the original in exactly those two places."""
+    yaml = _yaml()
+    before = yaml.safe_load(text) or {}
+    clash = sorted(set(variants) & set(before.get("weights") or {}))
+    if clash:
+        raise Refusal(f"the target's model profile already has weights variant(s) {clash}")
+    lines = text.splitlines(keepends=True)
+    head = next((i for i, ln in enumerate(lines) if re.match(r"^weights:[ \t]*(#.*)?$", ln)), None)
+    if head is None:
+        raise Refusal("the target's model profile has no block-style `weights:` mapping")
+    last = head
+    for i in range(head + 1, len(lines)):
+        if not lines[i].strip():
+            continue
+        if lines[i][0] not in " \t":
+            break                     # a top-level key or comment ends the block
+        last = i
+    dumped = yaml.dump(variants, Dumper=_indented_dumper(), sort_keys=False,
+                       allow_unicode=True, default_flow_style=False, width=1000)
+    block = "".join("  " + ln if ln.strip() else ln for ln in dumped.splitlines(keepends=True))
+    if not lines[last].endswith("\n"):
+        lines[last] += "\n"
+    lines[last + 1:last + 1] = [block]
+    out = "".join(lines)
+    if tp_add:
+        out = _merge_valid_tp(out, tp_add)
+    after = yaml.safe_load(out) or {}
+    want = dict(before)
+    want["weights"] = {**(before.get("weights") or {}), **variants}
+    if tp_add:
+        want["valid_tp"] = sorted(set(before.get("valid_tp") or []) | set(tp_add))
+        after = dict(after, valid_tp=sorted(after.get("valid_tp") or []))
+    if after != want:
+        raise Refusal("adding the weights snippet as text did not give the expected profile "
+                      "(an unusual layout); add it by hand")
+    return out
+
+
+def bump_disk_counts(text: str, now: tuple[int, int], add: tuple[int, int]) -> Optional[str]:
+    """test-compose-registry-disk with its two pinned counts raised by ``add``, or
+    None when the literals don't match the target's current counts (already off,
+    so a mechanical bump would only move the drift)."""
+    out = text
+    for rx, cur, n in ((_DISK_ENTRIES, now[0], add[0]), (_DISK_FILES, now[1], add[1])):
+        m = rx.search(out)
+        if not m or m.group(2) != str(cur) or m.group(4) != str(cur):
+            return None
+        out = rx.sub(lambda m: f"{m.group(1)}{cur + n}{m.group(3)}{cur + n}{m.group(5)}", out, 1)
+    return out
+
+
+def _run_in(target: Path, cmd: list[str]) -> subprocess.CompletedProcess:
+    env = dict(os.environ, PYTHONUTF8=os.environ.get("PYTHONUTF8", "1"))
+    return subprocess.run(cmd, cwd=str(target), capture_output=True, text=True,
+                          encoding="utf-8", env=env)
+
+
+def guard_results(target: Path) -> dict[str, tuple[int, set[str]]]:
+    """{guard: (exit code, its FAIL lines)} for the fast catalog guards, run in
+    ``target``. Taken before and after the apply, so a guard that was already red
+    there (a gitignored mount source missing in a fresh worktree, say) isn't
+    blamed on the apply."""
+    out = {}
+    for g in APPLY_GUARDS:
+        script = target / "scripts" / "tests" / f"{g}.sh"
+        if script.is_file():
+            res = _run_in(target, ["bash", str(script)])
+            out[g] = (res.returncode, {ln.strip() for ln in res.stdout.splitlines()
+                                       if ln.lstrip().startswith("FAIL")})
+    return out
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".apply.tmp")
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    if path.exists():
+        shutil.copymode(path, tmp)
+    os.replace(tmp, path)
+
+
+def _still_to_do(body: str) -> list[str]:
+    """The PR body's "Still to do in this PR" checklist (engine image arms,
+    cache fallbacks), so --apply can print it where the maintainer is looking."""
+    lines = body.splitlines()
+    try:
+        i = next(n for n, ln in enumerate(lines) if ln.startswith("**Still to do in this PR:**"))
+    except StopIteration:
+        return []
+    out = []
+    for ln in lines[i + 1:]:
+        if ln.startswith("- "):
+            out.append(ln)
+        elif out and not ln.strip():
+            break
+    return out
+
+
+def apply_bundle(root: Path, target: Path, files: dict[str, Any], states: list[dict],
+                 *, out: Path, dry_run: bool) -> int:
+    """Write the bundle to ``out`` and into ``target``. Refusals (exit 3) come
+    before anything is written, the bundle included; a failed check after the
+    write puts the target back and exits 2."""
+    yaml = _yaml()
+    if target == root:
+        raise Refusal(
+            "--into is this checkout, whose local layer the bundle came from: once core "
+            "has the new weights variants, the local extends.d copy defines them a second "
+            "time and the loader refuses both. Apply into a separate checkout on a PR "
+            "branch, e.g. `git worktree add -b <branch> <dir> origin/master`.")
+    top = _git(target, "rev-parse", "--show-toplevel")
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != target:
+        raise Refusal(f"{target} is not the top of a git checkout")
+    if not (target / _REGISTRY_YAML_REL).is_file():
+        raise Refusal(f"{target} has no {_REGISTRY_YAML_REL} — not a club-3090 checkout")
+    dirty = _git(target, "status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+    if dirty:
+        raise Refusal(f"{target} has uncommitted changes, which would mix into this PR's "
+                      f"diff: {'; '.join(dirty[:5])}")
+    branch = _git(target, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+    # every change, worked out before anything is written
+    new_files: dict[Path, Any] = {}
+    for rel, content in files.items():
+        if rel == "PR_BODY.md" or rel == "registry-entry.yaml" or rel.startswith("weights-snippet-"):
+            continue
+        dest = target / _target_rel(rel)
+        if dest.exists():
+            raise Refusal(f"{_target_rel(rel)} already exists in {target}")
+        new_files[dest] = content
+    modified: dict[Path, str] = {}
+    for st in states:
+        variants = new_variants(st)
+        if not variants:
+            continue
+        rel = f"{_CORE_MODELS_REL}/{st['model_id']}.yml"
+        path = target / rel
+        if not path.is_file():
+            raise Refusal(f"{target} has no {rel}: it doesn't ship {st['model_id']}")
+        snippet = yaml.safe_load(files[f"weights-snippet-{st['model_id']}.yaml"]) or {}
+        modified[path] = insert_weights(path.read_text(encoding="utf-8"),
+                                        snippet.get("weights") or {}, new_tp(st))
+    entry_text = files.get("registry-entry.yaml")
+    slugs: list[str] = []
+    if entry_text:
+        reg_mod = registry_module(root)      # read-only parsing; the merge runs in the target
+        slugs = list(reg_mod.parse_registry_text(entry_text, source="registry-entry.yaml")["entries"])
+        have = reg_mod.load_registry_data(target / _REGISTRY_YAML_REL)["entries"]
+        clash = sorted(set(slugs) & set(have))
+        if clash:
+            raise Refusal(f"{target}'s registry already has {', '.join(clash)}")
+        now_entries = len(have)
+        now_files = len(set((target / "models").glob("*/*/compose/*/*/*.yml")))
+        add_files = sum(1 for p in new_files if _is_compose_file(p.relative_to(target).as_posix()))
+        disk_test = target / _DISK_TEST_REL
+        bumped = (bump_disk_counts(disk_test.read_text(encoding="utf-8"), (now_entries, now_files),
+                                   (len(slugs), add_files)) if disk_test.is_file() else None)
+        if bumped is not None:
+            modified[disk_test] = bumped
+
+    _info(f"apply into {target} (branch {branch or '?'}):")
+    for p in new_files:
+        _info(f"  add    {p.relative_to(target)}")
+    if slugs:
+        _info(f"  merge  {_REGISTRY_YAML_REL}: {', '.join(slugs)}")
+    for p in modified:
+        _info(f"  edit   {p.relative_to(target)}")
+    if slugs and (target / _DISK_TEST_REL) not in modified:
+        _info(f"  (not bumped: {_DISK_TEST_REL}'s counts don't match the target today — "
+              "fix them by hand)")
+    if branch in ("master", "main"):
+        _info(f"  note: {target} is on {branch} — this belongs on a PR branch "
+              f"(`git -C {target} switch -c <branch>` first)")
+    if dry_run:
+        _info("dry-run — nothing written.")
+        return 0
+
+    write_bundle(out, files)              # PR_BODY.md for the PR, and a record of what went in
+    baseline = guard_results(target)
+    snapshot = {p: p.read_bytes() for p in [*modified, target / _REGISTRY_YAML_REL]}
+    created: list[Path] = []
+
+    def restore(why: str) -> int:
+        for p in reversed(created):
+            if p.is_file():
+                p.unlink()
+            elif p.is_dir() and not any(p.iterdir()):
+                p.rmdir()
+        for p, b in snapshot.items():
+            p.write_bytes(b)
+        print(f"[export-pr] ERROR: {why}\n[export-pr] {target} was put back as it was.",
+              file=sys.stderr)
+        return EXIT_INTERNAL
+
+    try:
+        for dest, content in new_files.items():
+            missing = []
+            d = dest.parent
+            while not d.exists():
+                missing.append(d)
+                d = d.parent
+            for d in reversed(missing):
+                d.mkdir()
+                created.append(d)
+            created.append(dest)
+            if isinstance(content, bytes):
+                dest.write_bytes(content)
+            else:
+                dest.write_text(content, encoding="utf-8")
+        for path, text in modified.items():
+            _write_text_atomic(path, text)
+    except OSError as exc:
+        return restore(f"writing failed: {exc}")
+    if entry_text:
+        entry_file = target / ".export-registry-entry.yaml"
+        entry_file.write_text(entry_text, encoding="utf-8")
+        try:
+            merged = _run_in(target, [sys.executable, "-c", _MERGE_SNIPPET, str(entry_file)])
+        finally:
+            entry_file.unlink()
+        if merged.returncode != 0:
+            return restore("merging registry-entry.yaml failed:\n"
+                           + (merged.stderr or merged.stdout).strip()[-800:])
+    for cmd, what in (([sys.executable, "scripts/lib/profiles/migrate_registry_to_yaml.py",
+                        "--check"], "registry.yaml is not canonical"),
+                      ([sys.executable, "-c", _APPLY_CHECK, json.dumps(slugs)],
+                       "the target's catalog did not load as intended")):
+        chk = _run_in(target, cmd)
+        if chk.returncode != 0:
+            return restore(f"{what}:\n" + (chk.stderr or chk.stdout).strip()[-800:])
+
+    _info(f"applied: {len(new_files)} file(s) added, {len(slugs)} registry entr"
+          f"{'y' if len(slugs) == 1 else 'ies'} merged, {len(modified)} file(s) edited")
+    _info("guards in the target:")
+    red = []
+    for g, (code, fails) in guard_results(target).items():
+        base_code, base_fails = baseline.get(g, (0, set()))
+        new = sorted(fails - base_fails)
+        if code == 0:
+            _info(f"  ok   {g}")
+        elif base_code != 0 and not new:
+            _info(f"  --   {g}: red before the apply too, with the same failures — not from it")
+        else:
+            red.append(g)
+            _info(f"  FAIL {g}" + (" (it was red before; these failures are new)"
+                                   if base_code != 0 else ""))
+            for ln in new[:5]:
+                _info(f"         {ln}")
+    _info("still to do there: test-profiles-compat and test-launch-compat (the engine's "
+          "supported_model_families and the hardware profiles' supported_kv_formats must "
+          "name the new combinations), diagnose-profile.sh <slug>, a boot through "
+          "switch.sh + verify-full, then the full suite — this is a catalog-shape change.")
+    todo = _still_to_do(files.get("PR_BODY.md") or "")
+    if todo:
+        _info("and from the PR body's checklist:")
+        for ln in todo:
+            _info(f"  {ln}")
+    if red:
+        _info(f"red above: {', '.join(red)} — fix in the target before the PR.")
+    print(f"APPLY_OK {target}")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="export_pr.py",
@@ -1094,7 +1457,16 @@ def main(argv: Optional[list[str]] = None) -> int:
                          "Hugging Face, anonymous image pull); required before a PR")
     ap.add_argument("--check", action="store_true",
                     help="validate completeness only — never writes anything")
+    ap.add_argument("--apply", action="store_true",
+                    help="also put the bundle into the checkout --into names (maintainer-gated: "
+                         + _CORE_GATE_ENV + "=1)")
+    ap.add_argument("--into", metavar="DIR",
+                    help="with --apply: a separate club-3090 checkout on a PR branch")
     args = ap.parse_args(argv)
+    if args.apply != bool(args.into):
+        ap.error("--apply and --into go together")
+    if args.apply and args.check:
+        ap.error("--check validates only; drop it to --apply")
 
     root = Path(args.root).resolve()
     # #1142 / #1466: same as promote.py — no shell wrapper loads settings for this
@@ -1163,11 +1535,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"[export-pr] ERROR: {exc}", file=sys.stderr)
         return EXIT_INTERNAL
 
-    for ln in plan_lines(out, files, notes):
+    for ln in plan_lines(out, files, notes, Path(args.into).resolve() if args.apply else None):
         _info(ln)
     if args.check:
         _info(f"CHECK_OK {label} — all required core fields present.")
         return 0
+    if args.apply:
+        into = Path(args.into).resolve()
+        try:
+            if not args.dry_run:
+                if os.environ.get(_CORE_GATE_ENV) != "1":
+                    raise Refusal(
+                        f"--apply writes a checkout's curated catalog, so it is maintainer-gated: "
+                        f"set {_CORE_GATE_ENV}=1 (export it, or `bash scripts/settings.sh set "
+                        f"{_CORE_GATE_ENV}=1`). --dry-run shows the plan without it.")
+            code = apply_bundle(root, into, files, states, out=out, dry_run=args.dry_run)
+        except Refusal as exc:
+            print(f"[export-pr] REFUSED: {exc}", file=sys.stderr)
+            return EXIT_COLLISION
+        if code == 0 and not args.dry_run:
+            _info(f"commit it there, then open the PR with: gh pr create --body-file "
+                  f"{out / 'PR_BODY.md'}")
+        return code
     if args.dry_run:
         _info("dry-run — nothing written.")
         return 0

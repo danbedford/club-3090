@@ -930,3 +930,120 @@ class TestPrBody:
         assert res.returncode == 2
         assert "- **Model:**" in res.stderr and "template" in res.stderr
         assert not (tmp_path / "bundle").exists()
+
+
+# ── --apply --into: the bundle put into another checkout ────────────────────
+#
+# test-export-apply.sh drives cases 1/2 end to end; these cover the two paths
+# only the other kinds take: the model profile's remap (the bundle keeps it at
+# models/<id>.yml, a checkout at scripts/lib/profiles/models/<id>.yml), a whole
+# new models/<id>/ tree created (and removed again on restore), and the engine
+# profile passing through.
+
+def _target(tmp_path, name="target"):
+    """A git checkout of this tree's HEAD, on a PR branch: what --apply writes into."""
+    t = tmp_path / name
+    t.mkdir()
+    arch = subprocess.run(["git", "-C", str(REPO), "archive", "HEAD"],
+                          capture_output=True, check=True).stdout
+    subprocess.run(["tar", "-x", "-C", str(t)], input=arch, check=True)
+    subprocess.run(["git", "-c", "init.defaultBranch=pr-branch", "init", "-q", str(t)], check=True)
+    _commit(t, "base")
+    return t
+
+
+def _commit(t, msg):
+    git = ["git", "-C", str(t), "-c", "user.email=t@example.com", "-c", "user.name=t"]
+    subprocess.run(git + ["add", "-A"], check=True)
+    subprocess.run(git + ["commit", "-qm", msg], check=True)
+
+
+def _apply(root, out, spec, target):
+    f = root / "export-spec.json"
+    f.write_text(json.dumps(spec) + "\n", encoding="utf-8")
+    env = dict(os.environ, C3_ALLOW_CORE_PROMOTE="1")
+    return subprocess.run(
+        [sys.executable, str(REPO / "scripts/lib/profiles/export_pr.py"),
+         "--spec-file", str(f), "--root", str(root), "--out", str(out),
+         "--apply", "--into", str(target)],
+        capture_output=True, text=True, encoding="utf-8", env=env)
+
+
+def _changed(t) -> set[str]:
+    res = subprocess.run(["git", "-C", str(t), "status", "--porcelain", "--untracked-files=all"],
+                         capture_output=True, text=True, check=True)
+    return set(res.stdout.splitlines())
+
+
+def _in_target(t, code) -> str:
+    res = subprocess.run([sys.executable, "-c", code], cwd=str(t), capture_output=True,
+                         text=True, encoding="utf-8")
+    assert res.returncode == 0, res.stderr
+    return res.stdout.strip().splitlines()[-1]
+
+
+def _core_valid_profile() -> str:
+    """A profile the strict core schema accepts (the synthetic _profile_text() is
+    enough for the bundle, not for a target's loader, which refuses it and puts
+    the target back): a curated one under the new id."""
+    import yaml
+    d = yaml.safe_load((REPO / "scripts/lib/profiles/models/qwen3.6-27b.yml").read_text(encoding="utf-8"))
+    d.update(id=MID, display_name="My Model", weights=yaml.safe_load(_profile_text())["weights"],
+             default_weight_variant=QUANT, compatible_drafters=[])
+    d.pop("setup", None)
+    return yaml.safe_dump(d, sort_keys=False)
+
+
+class TestApply:
+    def test_case3_profile_lands_in_the_profiles_dir(self, root, tmp_path):
+        _seed_local(root, profile_text=_core_valid_profile())
+        t = _target(tmp_path)
+        res = _apply(root, tmp_path / "bundle", {"model_id": MID}, t)
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert (t / "scripts/lib/profiles/models" / f"{MID}.yml").read_text(encoding="utf-8") \
+            == _core_valid_profile()
+        assert not (t / "models" / f"{MID}.yml").exists()
+        assert _changed(t) == {
+            f"?? scripts/lib/profiles/models/{MID}.yml",
+            f"?? {CORE_COMPOSE_REL}",
+            " M scripts/lib/profiles/registry.yaml",
+            " M scripts/tests/test-compose-registry-disk.sh",
+        }
+        assert _in_target(t, (
+            "from scripts.lib.profiles.compat import load_profiles\n"
+            "from scripts.lib.profiles.compose_registry import get_registry\n"
+            f"e = get_registry()['{CORE_SLUG}']\n"
+            f"print(e['origin'], e['compose_path'], '{MID}' in load_profiles().models)")) \
+            == f"core {CORE_COMPOSE_REL} True"
+        assert (tmp_path / "bundle" / "PR_BODY.md").exists()
+
+    def test_case3_failed_check_removes_the_new_tree(self, root, tmp_path):
+        _seed_local(root, profile_text=_core_valid_profile())
+        t = _target(tmp_path)
+        (t / "scripts/lib/profiles/migrate_registry_to_yaml.py").write_text(
+            'import sys\nsys.exit("broken on purpose")\n', encoding="utf-8")
+        _commit(t, "break the canonical check")
+        res = _apply(root, tmp_path / "bundle", {"model_id": MID}, t)
+        assert res.returncode == 2 and "was put back as it was" in res.stderr, res.stderr
+        assert _changed(t) == set()
+        assert not (t / "models" / MID).exists()
+
+    def test_engine_profile_and_its_first_slug(self, core_root, tmp_path):
+        _seed_engine(core_root)
+        TestEngineExport()._slug_on_fork(core_root)
+        t = _target(tmp_path)
+        res = _apply(core_root, tmp_path / "bundle", {"engine_id": ENG}, t)
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert (t / "scripts/lib/profiles/engines" / f"{ENG}.yml").read_text(encoding="utf-8") \
+            == _engine_profile()
+        compose = f"models/{CM}/{ENG}/compose/dual/{EXT}/fp8-mtp.yml"
+        assert (t / compose).exists()
+        assert _in_target(t, (
+            "from scripts.lib.profiles.compat import load_profiles\n"
+            "from scripts.lib.profiles.compose_registry import get_registry\n"
+            "p = load_profiles(); e = get_registry()['vllm/qwen36-testfork-dual']\n"
+            f"print('{ENG}' in p.engines, e['origin'], '{EXT}' in p.models['{CM}'].weights)")) \
+            == "True core True"
+        # the engine's checklist (the launcher image arm) is printed, not only in PR_BODY.md
+        assert "and from the PR body's checklist:" in res.stdout
+        assert "VLLM_TESTFORK_IMAGE" in res.stdout.split("and from the PR body's checklist:")[1]
