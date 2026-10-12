@@ -188,15 +188,17 @@ _SKIP_DIRS = {".venv", "__pycache__", "node_modules", "profiles-local", ".git", 
 
 def mentions(root: Path, slug: str, skip: set[str]) -> dict[str, list[str]]:
     """Hand-written mentions, grouped: scripts/tools (launcher hints and the
-    like), tests, docs. Generated or rewritten files are in `skip`."""
+    like), tests, docs, and models/ (sibling compose header tables, model
+    READMEs). Generated or rewritten files are in `skip`; CHANGELOGs are history."""
     pat = re.compile(r"(?<![\w/.-])" + re.escape(slug) + r"(?![\w-]|\.\w)")
-    groups: dict[str, list[str]] = {"code": [], "tests": [], "docs": []}
-    bases = [root / "scripts", root / "tools", root / "docs", root / "README.md"]
+    groups: dict[str, list[str]] = {"code": [], "tests": [], "docs": [], "models": []}
+    bases = [root / "scripts", root / "tools", root / "docs", root / "models", root / "README.md"]
     for base in bases:
         files = [base] if base.is_file() else sorted(base.rglob("*")) if base.is_dir() else []
         for f in files:
             rel = f.relative_to(root).as_posix()
             if (not f.is_file() or f.suffix not in _TEXT_SUFFIXES or rel in skip
+                    or f.name == "CHANGELOG.md"
                     or _SKIP_DIRS.intersection(f.relative_to(root).parts)):
                 continue
             try:
@@ -206,6 +208,7 @@ def mentions(root: Path, slug: str, skip: set[str]) -> dict[str, list[str]]:
             if slug not in text:
                 continue
             group = ("tests" if rel.startswith("scripts/tests/") or "/tests/" in rel
+                     else "models" if rel.startswith("models/")
                      else "docs" if rel.startswith("docs/") or rel.endswith(".md") else "code")
             for n, line in enumerate(text.splitlines(), 1):
                 if pat.search(line):
@@ -435,6 +438,12 @@ def _deprecate(args, root, emoji_map, functional, header_status, dump_yaml, get_
         return 0
 
     litellm = root / LITELLM_REL
+    emit = "scripts/lib/litellm-emit.sh"
+    if litellm.is_file() and _run(root, ["bash", emit, "--check", str(root)]).returncode != 0:
+        raise Refusal(f"the generated block of {LITELLM_REL} is already out of date "
+                      f"(`bash {emit} --check` is red before this change), and regenerating it "
+                      f"here would fold that unrelated change into the deprecation. Regenerate "
+                      f"it in its own commit first: `bash {emit}`")
     snapshot = {p: p.read_bytes() for p in (compose_path, reg_path, litellm) if p.is_file()}
 
     def restore(why: str) -> int:
@@ -459,7 +468,6 @@ def _deprecate(args, root, emoji_map, functional, header_status, dump_yaml, get_
     readback = json.loads(chk.stdout.strip().splitlines()[-1])
     regenerated = False
     if litellm.is_file():
-        emit = "scripts/lib/litellm-emit.sh"
         if _run(root, ["bash", emit, "--check", str(root)]).returncode != 0:
             gen = _run(root, ["bash", emit, str(root)])
             again = _run(root, ["bash", emit, "--check", str(root)])
@@ -479,7 +487,7 @@ def _deprecate(args, root, emoji_map, functional, header_status, dump_yaml, get_
                   f"functional {topo} default now")
 
     skip = {REGISTRY_REL, compose_rel, LITELLM_REL}
-    found: dict[str, list[str]] = {"code": [], "tests": [], "docs": []}
+    found: dict[str, list[str]] = {"code": [], "tests": [], "docs": [], "models": []}
     for t in targets:
         for group, hits in mentions(root, t, skip).items():
             found[group] += [h for h in hits if h not in found[group]]
@@ -503,6 +511,13 @@ def _deprecate(args, root, emoji_map, functional, header_status, dump_yaml, get_
             _info(f"    {m}")
         if len(other_docs) > 10:
             _info(f"    … and {len(other_docs) - 10} more")
+    if found["models"]:
+        _info(f"  under models/ ({len(found['models'])}): sibling compose header tables are kept "
+              f"both ways, and a model README may recommend it")
+        for m in found["models"][:10]:
+            _info(f"    {m}")
+        if len(found["models"]) > 10:
+            _info(f"    … and {len(found['models']) - 10} more")
     if found["tests"]:
         _info(f"  tests that name it ({len(found['tests'])}); the guards below show which "
               f"still hold")

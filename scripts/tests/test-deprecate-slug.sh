@@ -18,7 +18,8 @@
 #      listed; a second run is a no-op
 #   4. --drop-default + --drop-gateway: the row and the route go, and the
 #      resolver and recommended-model warning say so
-#   5. a check failing after the write puts every file back byte for byte
+#   5. a check failing after the write puts every file back byte for byte;
+#      a gateway config that is already stale is refused before any write
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -154,7 +155,10 @@ bash "$R/scripts/tests/test-compose-status-drift.sh" >/dev/null 2>&1 && ok "test
 (cd "$R" && bash scripts/lib/litellm-emit.sh --check "$R" >/dev/null 2>&1) && ok "litellm-emit --check green" || fail "litellm-emit --check red"
 command grep -q "# status: deprecated" "$R/services/litellm/config.yaml" && ok "gateway route kept, annotated deprecated" || fail "no deprecated annotation in the gateway config"
 [[ "$out" == *"qwen3.6-27b dual default now: vllm/qwen-27b-dual-max"* && "$out" == *"hand-written mentions in scripts/ and tools/"* \
-   && "$out" == *"models/qwen3.6-27b/CHANGELOG.md"* ]] && ok "reports the resolver result, mentions and CHANGELOG" || fail "report: $out"
+   && "$out" == *"under models/"* && "$out" == *"models/qwen3.6-27b/CHANGELOG.md"* ]] \
+  && ok "reports the resolver result, mentions (models/ too) and CHANGELOG" || fail "report: $out"
+[[ "$out" != *"/CHANGELOG.md:"* && "$out" != *"fp8-mtp.yml:"* ]] \
+  && ok "the mention scan skips CHANGELOGs and the deprecated compose itself" || fail "scan noise: $out"
 S1="$(state)"
 out="$(dep vllm/dual --reason "$WHY")"; code=$?
 [[ $code -eq 0 && "$out" == *"already deprecated"* && "$(state)" == "$S1" ]] && ok "a second run is a no-op" || fail "rerun (rc=$code): $out"
@@ -172,7 +176,8 @@ out="$(dep "$G" --reason "Test: no functional sibling." --drop-default --drop-ga
 # 5. a failure after the write restores everything
 F=vllm/qwen-35b-a3b-dual
 cp "$R/scripts/lib/litellm-emit.sh" "$TMP/emit.bak"
-printf '#!/usr/bin/env bash\necho "emit broke" >&2; exit 7\n' > "$R/scripts/lib/litellm-emit.sh"
+# passes the pre-write check, then breaks: the failure lands after the write
+printf '#!/usr/bin/env bash\nm="%s/emit.ran"; [[ -e "$m" ]] || { touch "$m"; exit 0; }\necho "emit broke" >&2; exit 7\n' "$TMP" > "$R/scripts/lib/litellm-emit.sh"
 F_COMPOSE="$R/$(entry "$F" compose_path)"
 before="$(cat "$REG" "$F_COMPOSE" "$R/services/litellm/config.yaml" | sha256sum)"
 out="$(dep "$F" --reason "Test: restore." --drop-default --keep-gateway)"; code=$?
@@ -180,6 +185,14 @@ after="$(cat "$REG" "$F_COMPOSE" "$R/services/litellm/config.yaml" | sha256sum)"
 [[ $code -eq 2 && "$out" == *"every file was put back"* && "$before" == "$after" ]] \
   && ok "a failed check restores every file" || fail "restore (rc=$code): $out"
 cp "$TMP/emit.bak" "$R/scripts/lib/litellm-emit.sh"
+CFG="$R/services/litellm/config.yaml"
+sed -i -E '0,/api_base: http:\/\/host\.docker\.internal:[0-9]+/s//api_base: http:\/\/host.docker.internal:9999/' "$CFG"
+N_COMPOSE="$R/$(entry "$NONDEF" compose_path)"
+before="$(cat "$REG" "$N_COMPOSE" "$CFG" | sha256sum)"
+out="$(dep "$NONDEF" --reason "Test: stale gateway.")"; code=$?
+after="$(cat "$REG" "$N_COMPOSE" "$CFG" | sha256sum)"
+[[ $code -eq 3 && "$out" == *"already out of date"* && "$before" == "$after" ]] \
+  && ok "a gateway config stale before the run is refused, nothing written" || fail "stale gateway (rc=$code): $out"
 ls "$R"/scripts/lib/profiles/*.deprecate.tmp "$R"/models/*/*/compose/*/*/*.deprecate.tmp >/dev/null 2>&1 \
   && fail "temp files left behind" || ok "no temp files left behind"
 
