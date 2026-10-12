@@ -17,7 +17,8 @@
 #   Max ctx:   262K (n_ctx_train=262144 — native). Whole estate ~13.4 GiB on one
 #              24 GiB 3090 (KV 4.25 + weights 5.23 + buffers), ~10 GiB headroom.
 #   Genesis:   N/A — Genesis is a vLLM patch system; this is ik_llama GGUF.
-#   Status:    🧪 Experimental
+#   Status:    🗑️ Deprecated
+#   Caveats:   ik_llama.cpp is out of the catalog (maintainer decision): no ik-llama engine profile and no ik slugs are planned, and this slug was registered against the mainline llama-cpp-local profile, which doesn't describe it.
 #   Quality:   8-pack think-OFF 91/150 (toolcall 12 · instructfollow 12 · structoutput 14
 #              · dataextract 10 · reasonmath 10 · bugfind 14 · hermesagent 12/20 · cli 7/40)
 #              · think-ON 95/150 (--full, ik Q4_K_M + ngram, temp 0.6, 2026-06-25).
