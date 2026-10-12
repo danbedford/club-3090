@@ -445,7 +445,10 @@ class TestCoreModelExtensions:
         assert "extension   KEPT" in r.stderr
         assert (root / "scripts/lib/profiles/models/qwen3.6-27b.yml").is_file()
 
-    def test_export_refuses_an_attached_slug_with_the_reason(self, root):
+    def test_export_reads_an_attached_slug_as_a_curated_model_export(self, root):
+        # Slugs attached to a curated model are cases 1 and 2 of ADDING_MODELS
+        # "Which case is this?": export_pr bundles them (it used to refuse). An
+        # extension with nothing attached still has nothing to export.
         _write_ext(root, _good_ext())
         r = _py(root,
                 "from pathlib import Path\n"
@@ -453,9 +456,18 @@ class TestCoreModelExtensions:
                 "try:\n"
                 f"    load_local_state(Path('.').resolve(), {CORE_MODEL!r})\n"
                 "except Refusal as e:\n"
-                "    assert 'CORE model extended' in str(e), e\n"
+                "    assert 'nothing local to export' in str(e), e\n"
                 "else:\n"
                 "    raise SystemExit('no refusal')\n")
+        assert r.returncode == 0, r.stderr
+        _write_compose(root)
+        _write_local(root, {"vllm/qwen36-ext-dual": dict(ATTACHED_KWARGS)})
+        r = _py(root,
+                "from pathlib import Path\n"
+                "from scripts.lib.profiles.export_pr import load_local_state\n"
+                f"st = load_local_state(Path('.').resolve(), {CORE_MODEL!r})\n"
+                "assert st['kind'] == 'core-model', st['kind']\n"
+                "assert [e['slug'] for e in st['entries']] == ['vllm/qwen36-ext-dual']\n")
         assert r.returncode == 0, r.stderr
 
     def test_extends_dir_constants_agree(self, root):
