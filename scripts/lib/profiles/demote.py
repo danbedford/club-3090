@@ -14,12 +14,16 @@ registry still advertises the slug, so every launcher offers a config whose
 compose no longer exists. Removing (3) alone is just as bad in the other
 direction — an orphaned compose tree nothing references.
 
-    python3 scripts/lib/profiles/demote.py --slug local/my-model
-    python3 scripts/lib/profiles/demote.py --slug local/my-model --dry-run
+    python3 scripts/lib/profiles/demote.py --slug vllm/my-model-dual
+    python3 scripts/lib/profiles/demote.py --slug vllm/my-model-dual --dry-run
+
+``bash scripts/catalog.sh unregister --slug …`` is the front door to this.
 
 CORE IS NEVER TOUCHED. There is no ``--layer core``: a curated entry lives in
-git-tracked files and version control is its removal tool. Asking to remove a
-non-``local/`` slug is refused before anything is read.
+git-tracked files and version control is its removal tool. A slug that isn't in
+``registry.local.json`` is refused before anything is read. Since #1202 local
+slugs have the same ``<engine>/<name>`` shape as curated ones, so the check is
+where the entry lives, not what it's called.
 
 Exit codes match promote.py: 0 success, 3 refusal (nothing written), 2 internal
 failure after removal started.
@@ -45,8 +49,6 @@ _LOCAL_DIR_REL = "scripts/lib/profiles-local"
 _LOCAL_MODELS_REL = f"{_LOCAL_DIR_REL}/models.d"
 _LOCAL_COMPOSES_REL = f"{_LOCAL_DIR_REL}/composes"
 _LOCAL_REGISTRY_REL = f"{_LOCAL_DIR_REL}/registry.local.json"
-
-_LOCAL_NS = "local/"
 
 EXIT_COLLISION = 3
 EXIT_INTERNAL = 2
@@ -239,7 +241,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         description="Remove a model from the LOCAL layer (never the curated catalog)."
     )
-    ap.add_argument("--slug", required=True, help="the local/<name> slug to remove")
+    ap.add_argument("--slug", required=True, help="the slug to remove (it must be in registry.local.json)")
     ap.add_argument("--root", default=str(_DEFAULT_ROOT), help="repo root")
     ap.add_argument("--dry-run", action="store_true", help="print the plan, remove nothing")
     ap.add_argument("-y", "--yes", action="store_true", help="skip the confirmation")
