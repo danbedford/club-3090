@@ -20,7 +20,7 @@ install:
   # Built 2026-08-31 from stack/club3090-moecachev1.6 (d9cc8af98) — NO rebase this
   # cycle; base is still v1.5's b10675. Recipe: .devops/cuda.Dockerfile,
   # CUDA_VERSION=12.8.1, CUDA_DOCKER_ARCH="86;89;120", GGML_BACKEND_DL=ON,
-  # GGML_CPU_ALL_VARIANTS=ON, LLAMA_BUILD_TESTS=OFF, target `full`. Package is PRIVATE.
+  # GGML_CPU_ALL_VARIANTS=ON, LLAMA_BUILD_TESTS=OFF, target `full`.
   #
   # DELTA vs v1.5: @danielhanchen's 0069971 (glm5next indexer pool key cache) +
   # 5796547f3 (invalidate pooled keys when a shift splits a pool), both from

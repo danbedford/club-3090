@@ -19,21 +19,21 @@
 # Deprecated/non-functional composes are skipped (their defaults are dead weight;
 # launchers inject the engine-profile image anyway) and listed.
 #
-# The judgment half of a bump lives in /opt/ai/CLAUDE.md "When upgrading an engine
-# pin" — re-validating vendored patches on the real image, live-boot + 3-warm-up
-# validation, verify-full, trackers. This script prints that checklist; it cannot
-# run it for you.
+# The judgment half of a bump can't be scripted: re-validating vendored patches on
+# the real image, a live boot with 3 warm-up requests, verify-full, the trackers.
+# This script prints that checklist at the end of its report (AGENTS.md "Engine
+# image pinning" points here); it cannot run it for you.
 #
 # Usage:
 #   scripts/engine-pin-bump.sh <engine-id> <new-tag-or-full-ref> [--check]
 #   scripts/engine-pin-bump.sh vllm-stable v0.25.0
 #   scripts/engine-pin-bump.sh vllm-stable vllm/vllm-openai:v0.25.0 --check
-#   scripts/engine-pin-bump.sh llama-cpp-local server-cuda-b9967 --check
+#   scripts/engine-pin-bump.sh llama-cpp-local ghcr.io/ggml-org/llama.cpp@sha256:<digest> --check
 #
 #   <engine-id> is the profile `id:`, which is also its filename
-#   (engines/<id>.yml). Digest-pinned engines (beellama) require a full
-#   `repo@sha256:...` ref; for those prefer scripts/beellama-pin-bump.sh which
-#   also discovers the newest tag.
+#   (engines/<id>.yml). A digest-pinned engine (llama-cpp-local, the llamacpp-club3090,
+#   prism and exllamav3 builds, vllm-lmcache, beellama) takes a full `repo@sha256:...`
+#   ref; for beellama, scripts/beellama-pin-bump.sh also discovers the newest tag.
 #
 #   --check  dry-run: print the would-be diff and the hand-attention report, write nothing.
 #
@@ -249,7 +249,7 @@ if n_hits == 0:
     print(f"  (no other occurrences of '{old_tag}' under scripts/ docs/ models/ services/ c3/)")
 
 print(f"""
-── remaining checklist (judgment half — /opt/ai/CLAUDE.md "When upgrading an engine pin") ──
+── remaining checklist (the judgment half — this script can't do it for you) ──
   1. arch_patches.yml: add an engine_pin row for {ENGINE}@{new_tag} with loads: true
      ONLY after a live boot proves it (keep the {old_tag} row as history).
   2. Re-validate every vendored patch/overlay on the ACTUAL new image (merged→drop,
@@ -258,7 +258,7 @@ print(f"""
   3. Fixtures asserting the literal old pin (see report above) → update to {new_tag}.
   4. Live boot via switch.sh, 3 warm-up requests BEFORE judging output, verify-full
      (pass MODEL=<served-name>), high-ctx NIAH if KV-affecting.
-  5. docs/UPSTREAM.md engine-pin row + dated learnings/<model>.md entry.
+  5. docs/UPSTREAM.md engine-pin row + a dated models/<model>/CHANGELOG.md entry.
   6. Targeted guards: test-launch-compat, test-diagnose-profile, test-patch-attribution,
      registry emit/JSON.
 """)

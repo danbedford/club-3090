@@ -18,7 +18,7 @@ install:
   method: docker_image
   # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
   # Built 2026-08-10 from noonghunna/llama.cpp @ stack/club3090-moe-cache (e0a208949),
-  # CUDA 12.8.1 base, CMAKE_CUDA_ARCHITECTURES="86;89;120". Package is PRIVATE.
+  # CUDA 12.8.1 base, CMAKE_CUDA_ARCHITECTURES="86;89;120".
   spec: ghcr.io/noonghunna/llamacpp-club3090@sha256:17824d4483dbd60c297613bddf130f25e739d3edc7e633e4d973edc4e2165649
 # The expert cache gates itself on Ampere (moe_cache_cc_ampere). Below that the
 # feature is simply absent, and there is no degraded path, so no fallback_sm.

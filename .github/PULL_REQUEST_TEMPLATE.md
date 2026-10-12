@@ -18,7 +18,7 @@ what existing variant did you compare against, what's the trade-off? -->
 
 ## Type of change
 
-- [ ] New compose variant (`models/<model>/<engine>/compose/docker-compose.<name>.yml`)
+- [ ] New compose variant (`models/<model>/<engine-dir>/compose/<topology>/<quant>/<serving>.yml`)
 - [ ] New patch / sidecar (`models/<model>/<engine>/patches/`)
 - [ ] New script or tool (`scripts/`, `tools/`)
 - [ ] New model (`models/<new-model>/`)

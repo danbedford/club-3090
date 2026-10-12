@@ -100,14 +100,20 @@ Pin engine images when **either** trigger holds: (1) we vendor patches into the 
 
 **Why:** patches hook into specific upstream code paths — a silent upstream change drifts those hooks and breaks the patched container in production. Pinning ensures the bytes we tested against are the bytes users get. Unpatched engines have no such hook, so upstream changes are upstream's problem to fix (or the YAML's, which is cheap to maintain) — *unless* the tag itself has proven mutable-under-validation, which is trigger (2).
 
-**Pins are a maintenance liability — bump them on a cadence.** A stale stability-pin silently costs quality, not just features: the b9246→b9967 llama.cpp A/B (2026-07-11, #680) was think-OFF-neutral but **+4 think-ON** with 3 scenario-level flips. `scripts/engine-pin-bump.sh <engine-id> <tag> --check` does the mechanical half (spec + compose defaults + a bucketed report of fixtures/claims needing hands); the judgment half (re-validation, live boot) stays with the pin-bump checklist.
+**Pins are a maintenance liability — bump them on a cadence.** A stale stability-pin silently costs quality, not just features: the b9246→b9967 llama.cpp A/B (2026-07-11, #680) was think-OFF-neutral but **+4 think-ON** with 3 scenario-level flips. `scripts/engine-pin-bump.sh <engine-id> <tag> --check` does the mechanical half (spec + compose defaults + a bucketed report of fixtures/claims needing hands); the judgment half (re-validation, live boot) is the checklist it prints at the end of its report.
 
-| Engine | Patches we vendor | Tag policy |
+| Engine (profile) | Patches we vendor | Pin |
 |---|---|---|
-| `llama.cpp` | none | pinned **build tag** (e.g. `server-cuda-b9967`) — trigger (2): stability-pinned after the #187 rolling-tag crash-loop; zero patches, so bumps are cheap (`engine-pin-bump.sh llama-cpp-local <tag>`) |
-| `vLLM` | Marlin pad, KV/loader overlays — `scripts/lib/profiles/patches.yml` is the source of truth | pinned **release tag** (e.g. `v0.22.0`, `v0.24.0`) — **never `nightly-*`/`latest`**: upstream purges nightly tags, orphaning the pin |
-| `beellama.cpp` | none (the fork *is* the delta) | **digest-pinned** to Anbeeld's official image (`engines/beellama-local.yml` `install.spec`) |
-| `SGLang` | per-compose decision (pin if we vendor a patch, rolling otherwise) | per-compose |
+| vLLM (`vllm-stable` and the other stock or patched `vllm-*` profiles) | Marlin pad, KV/loader overlays — `scripts/lib/profiles/patches.yml` is the source of truth | **release tag** of `vllm/vllm-openai` (read `engines/vllm-stable.yml`) — **never `nightly-*`/`latest`**: upstream purges nightly tags, orphaning the pin. The four `vllm-nightly-*` profiles predate this and no live slug uses them |
+| SGLang (`sglang-stable`) | none today | **release tag** of `lmsysorg/sglang` |
+| llama.cpp mainline (`llama-cpp-local`) | none | **digest** of ggml-org's official image — trigger (2): stability-pinned after the #187 rolling-tag crash-loop; zero patches, so bumps are cheap (`engine-pin-bump.sh llama-cpp-local ghcr.io/ggml-org/llama.cpp@sha256:<digest>`) |
+| moe-cache llama.cpp (`llamacpp-club3090-*`) | none (our fork *is* the delta; one profile per release) | **digest** of our own `ghcr.io/noonghunna/llamacpp-club3090` |
+| PrismML llama.cpp (`llama-cpp-prism`) | none | **digest** of `ghcr.io/noonghunna/llamacpp-prism`, a wrapper we build around PrismML's release (an image-provenance exception, `docs/ADDING_ENGINES.md`) |
+| ExLlamaV3 / TabbyAPI (`exllamav3`) | none | **digest** of `ghcr.io/noonghunna/tabbyapi-club3090`, which we build (same exception) |
+| vLLM + LMCache (`vllm-lmcache`, a third-party derivative) | none | **digest** of `lmcache/vllm-openai` (its tag was re-pushed) |
+| beellama.cpp (`beellama-local`) | none (the fork *is* the delta) | **digest** of Anbeeld's official image. Engine retired 2026-07-27; every slug is deprecated |
+
+A new engine follows [`docs/ADDING_ENGINES.md`](docs/ADDING_ENGINES.md) → "CONTRACT — image provenance": a derivative or fork is pinned by digest, to an image its own maintainer publishes.
 
 When adding the first vendored patch to a previously-rolling engine: pin in the same commit. When dropping the last patch: unpin in the same commit — unless the engine holds a trigger-(2) stability pin, which outlives its patches. Bump pins via PR with a `verify-full.sh` + `bench.sh` re-run, never silently.
 
