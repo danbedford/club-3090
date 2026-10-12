@@ -6,7 +6,8 @@
 #       Creates, as you, every directory the compose mounts under
 #       ${CLUB3090_ENGINE_CACHE_DIR} / ${CLUB3090_DATA_DIR}, and prints the
 #       CLUB3090_ENGINE_CACHE_DIR=… / CLUB3090_DATA_DIR=… lines for that compose's
-#       environment. Prints nothing, and costs nothing, for a compose that mounts
+#       environment, plus DOCKER_GID=<your group> when the compose reads it and
+#       nothing set it. Prints nothing, and costs nothing, for a compose that mounts
 #       neither. Never fails: on any problem it says why, prints nothing, and the
 #       compose falls back to its in-repo default for that launch.
 #   club_engine_cache_export <compose_dir> <compose_file> [options]
@@ -31,7 +32,7 @@ club_engine_cache_export() {
   command grep -qE '\$\{CLUB3090_ENGINE_CACHE_DIR' "$1/$2" 2>/dev/null && unset CLUB3090_ENGINE_CACHE_DIR
   while IFS= read -r line; do
     case "$line" in
-      CLUB3090_ENGINE_CACHE_DIR=*|CLUB3090_DATA_DIR=*) export "$line" ;;
+      CLUB3090_ENGINE_CACHE_DIR=*|CLUB3090_DATA_DIR=*|DOCKER_GID=*) export "$line" ;;
     esac
   done < <(club_engine_cache_env "$@")
 }

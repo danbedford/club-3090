@@ -50,6 +50,9 @@ Docker creates a missing bind-mount source itself, as root:root 0755, and under 
 that is a directory the user can't clean up without sudo. So prepare() creates every
 directory a compose mounts, as the calling user, before compose runs. The containers
 still run as root; ``user: "0:${DOCKER_GID:-1000}"`` gives their files the user's group.
+prepare() returns that group as DOCKER_GID (the calling user's primary group; SUDO_GID
+when it runs as root; never 0) unless one is already set, because nothing else sets it:
+before 2026-10-12 every launch used the compose default 1000, whatever the user's group.
 
 prepare() never fails a launch. When something is missing (docker compose v2, the
 image, a writable directory) it says why and returns nothing, and the compose uses its
@@ -73,6 +76,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -82,7 +86,8 @@ from scripts.lib import club_config  # noqa: E402
 
 CACHE_VAR = "CLUB3090_ENGINE_CACHE_DIR"
 DATA_VAR = "CLUB3090_DATA_DIR"
-OUTPUT_VARS = (CACHE_VAR, DATA_VAR)
+GID_VAR = "DOCKER_GID"
+OUTPUT_VARS = (CACHE_VAR, DATA_VAR, GID_VAR)
 # Absolute stand-ins rendered in place of the two variables, so the rendered compose
 # shows which mounts hang off them (docker compose leaves absolute paths alone).
 SENTINELS = {CACHE_VAR: "/__club3090_engine_cache__", DATA_VAR: "/__club3090_data__"}
@@ -275,7 +280,8 @@ def _free(path: Path) -> str:
 def prepare(compose_files, **kw) -> dict[str, str]:
     """Create the directories a compose mounts under the two variables, as the calling
     user, and return {CLUB3090_ENGINE_CACHE_DIR: …, CLUB3090_DATA_DIR: …} (only the ones
-    it mounts) to add to that compose's environment.
+    it mounts), plus DOCKER_GID when the compose reads it and nothing set it, to add to
+    that compose's environment.
 
     Keywords: `env` resolves the per-user directories and should already hold the saved
     settings (club_config.load); `render_env` is the environment compose will interpolate
@@ -350,9 +356,25 @@ def _prepare(compose_files, *, env=None, render_env=None, env_file=None, compose
                              "vLLM's tier has no size cap; KV_OFFLOAD_DIR puts it on another disk.")
         except PrepareError as e:
             notes.append(f"[kv-offload] {e}; this launch uses the compose's in-repo default")
+    if "${" + GID_VAR in text and not (env.get(GID_VAR) or (render_env or {}).get(GID_VAR)):
+        gid = docker_gid(env)
+        if gid:
+            out[GID_VAR] = gid
     for n in notes:
         _say(n)
     return out
+
+
+def docker_gid(env=None) -> Optional[str]:
+    """The group `user: "0:${DOCKER_GID:-1000}"` should give a container's files: the
+    calling user's primary group, so the user can clean up what the container wrote.
+    Running as root (gpu-mode under sudo, say) that would be 0, so take SUDO_GID; with
+    neither, None, and the compose keeps its default. Never 0."""
+    gid = os.getgid()
+    if gid != 0:
+        return str(gid)
+    sudo = ((env or {}).get("SUDO_GID") or os.environ.get("SUDO_GID") or "").strip()
+    return sudo if sudo.isdigit() and sudo != "0" else None
 
 
 # ── settings.sh caches ───────────────────────────────────────────────────────

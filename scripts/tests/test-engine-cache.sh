@@ -99,7 +99,7 @@ case "\$sub" in
     case " \$* " in
       *" config "*) exec "$REAL_DOCKER" compose "\$@" ;;
       *" up "*)
-        printf 'CACHE=%s\nDATA=%s\n' "\${CLUB3090_ENGINE_CACHE_DIR-<unset>}" "\${CLUB3090_DATA_DIR-<unset>}" > "\$MOCK_ENV_OUT"
+        printf 'CACHE=%s\nDATA=%s\nGID=%s\n' "\${CLUB3090_ENGINE_CACHE_DIR-<unset>}" "\${CLUB3090_DATA_DIR-<unset>}" "\${DOCKER_GID-<unset>}" > "\$MOCK_ENV_OUT"
         pre=(); for a in "\$@"; do [[ "\$a" == up ]] && break; pre+=("\$a"); done
         "$REAL_DOCKER" compose "\${pre[@]}" config --format json > "\$MOCK_RENDER" 2>>"\$MOCK_LOG" || echo RENDER_FAILED >> "\$MOCK_LOG"
         echo "UP \$*" >> "\$MOCK_LOG" ;;
@@ -121,6 +121,11 @@ export MOCK_LOG="$T/calls.log" MOCK_ENV_OUT="$T/env.out" MOCK_RENDER="$T/render.
 export PREFLIGHT_NO_FETCH=1 PREFLIGHT_NO_COMPOSE_DEPS=1 CLUB3090_SHM_CLEANUP=0 C3_LITELLM_FAKE_LIVE=
 reset_mock() { : > "$MOCK_LOG"; rm -f "$MOCK_ENV_OUT" "$MOCK_RENDER"; }
 envout() { command grep -E "^$1=" "$MOCK_ENV_OUT" 2>/dev/null | head -1 | cut -d= -f2-; }
+# rendered_user → the `user:` of the rendered compose's service (one service here)
+rendered_user() {
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(iter(d["services"].values())).get("user",""))' \
+    "$MOCK_RENDER" 2>/dev/null
+}
 # mounted <container path> → the host source the rendered compose mounts there
 mounted() {
   python3 - "$MOCK_RENDER" "$1" <<'PY' 2>/dev/null
@@ -172,7 +177,13 @@ else
     || bad "a mounted dir is missing or not yours: $(ls -ld "$T/cache/$KEY_030"/* "$T/data/kv-offload" 2>&1 | tr '\n' ' ')"
   command grep -qF "[cache] compile cache: $T/cache/$KEY_030" <<<"$out" && ok "the launch log names the compile-cache dir" \
     || bad "no '[cache] compile cache:' line in the launch log"
+  [[ "$(envout GID)" == "$(id -g)" && "$(rendered_user)" == "0:$(id -g)" ]] \
+    && ok "… and DOCKER_GID=$(id -g), your group, rendered as user 0:$(id -g) (the compose default 1000 applied to everyone before)" \
+    || bad "DOCKER_GID at compose up: '$(envout GID)', rendered user '$(rendered_user)', expected $(id -g)"
 fi
+out="$(sw wt1 DOCKER_GID=4242)"
+[[ "$(envout GID)" == "4242" && "$(rendered_user)" == "0:4242" ]] && ok "a DOCKER_GID you set yourself wins" \
+  || bad "explicit DOCKER_GID=4242 reached compose up as '$(envout GID)', rendered user '$(rendered_user)'"
 out="$(sw wt2)"
 [[ "$(envout CACHE)" == "$T/cache/$KEY_030" ]] \
   && ok "a second checkout (fresh worktree) of the same slug gets the SAME cache dir — it reuses the warm cache" \
@@ -245,6 +256,9 @@ else
     && command grep -qxF "SUDO_ENV CLUB3090_DATA_DIR=$T/data" "$MOCK_LOG" \
     && ok "both dirs cross sudo as VAR=val arguments (sudo drops the environment and HOME)" \
     || bad "sudo got: $(command grep SUDO_ENV "$MOCK_LOG" | tr '\n' ' ')"
+  command grep -qxF "SUDO_ENV DOCKER_GID=$(id -g)" "$MOCK_LOG" \
+    && ok "DOCKER_GID crosses sudo too, as your group (computed before sudo, not root's 0)" \
+    || bad "sudo got no DOCKER_GID=$(id -g): $(command grep SUDO_ENV "$MOCK_LOG" | tr '\n' ' ')"
   [[ "$(mounted /root/.triton/cache)" == "$T/cache/$KEY_030/triton" && "$(mounted /kv-offload)" == "$T/data/kv-offload" ]] \
     && ok "the same dirs as switch.sh for the same image" || bad "gpu-mode render: $(mounted /root/.triton/cache) $(mounted /kv-offload)"
 fi
@@ -354,6 +368,18 @@ sg="$(awk '/def serve_generated/{f=1} f{print} f&&/return ActionPlan/{exit}' too
 [[ "$sg" == *'self._engine_cache_env(compose_path, env)'* ]] \
   && ok "c3's generated/brought-compose serve prepares them (catalog serves go through switch.sh)" \
   || bad "c3 serve_generated does not call _engine_cache_env"
+
+echo "[8] docker_gid(): the user's group, SUDO_GID as root, never 0"
+res="$(env -u SUDO_GID python3 - <<'PY'
+from scripts.lib import engine_cache as ec
+ec.os.getgid = lambda: 0
+print(ec.docker_gid({"SUDO_GID": "1234"}), ec.docker_gid({"SUDO_GID": "0"}), ec.docker_gid({}))
+ec.os.getgid = lambda: 1001
+print(ec.docker_gid({"SUDO_GID": "1234"}))
+PY
+)"
+[[ "$res" == $'1234 None None\n1001' ]] && ok "root → SUDO_GID, else nothing; a user → their own group" \
+  || bad "docker_gid(): $res"
 
 if [[ $fail -ne 0 ]]; then echo "test-engine-cache: FAIL" >&2; exit 1; fi
 echo "test-engine-cache: ok"
