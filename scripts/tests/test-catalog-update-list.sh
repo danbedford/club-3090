@@ -121,7 +121,7 @@ for want in "${checks[@]}"; do [[ "$out" == *"$want"* ]] || { fail "list did not
 json_ok="$(bash scripts/catalog.sh list --json --root "$R" 2>/dev/null | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
-print(sorted(d) == ['attached', 'engines', 'layer', 'models', 'problems', 'slugs'] and any(p['kind'] == 'shadowed' for p in d['problems']))")"
+print(sorted(d) == ['attached', 'engines', 'layer', 'models', 'problems', 'slugs', 'unused'] and any(p['kind'] == 'shadowed' for p in d['problems']))")"
 [[ "$json_ok" == "True" ]] && ok "--json carries every section and the problems" || fail "--json: $json_ok"
 echo '{not json' > "$L/registry.local.json"
 out="$(list_)"; code=$?

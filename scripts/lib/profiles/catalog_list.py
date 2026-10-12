@@ -161,34 +161,49 @@ def inventory(root: Path) -> dict[str, Any]:
     def users(pred):
         return sorted(s for s, e in entries.items() if pred(e))
 
+    # What nothing uses, as data: `catalog.sh prune` removes exactly these, so the
+    # report and the cleanup can never disagree. An engine registered on purpose
+    # (register-engine) is reported but not prunable; unregister-engine removes it.
+    unused: list[dict] = []
     for eid, info in engines.items():
         info["slugs"] = users(lambda e, i=eid: e.get("engine") == i)
         if not info["slugs"]:
-            what = ("unregister-engine --id " + eid) if info["registered"].startswith("on its own") \
-                else f"no slug uses it; remove {LOCAL}/engines.d/{info['file']}"
+            own = info["registered"].startswith("on its own")
+            what = ("unregister-engine --id " + eid) if own else "catalog.sh prune removes it"
             problems.append(("unused", f"engine {eid}: no local slug runs on it ({what})"))
+            if not own:
+                unused.append({"kind": "engine", "id": eid, "path": f"{LOCAL}/engines.d/{info['file']}"})
     for mid, info in models.items():
         info["slugs"] = users(lambda e, m=mid: e.get("model") == m)
         if not info["slugs"]:
             problems.append(("unused", f"model {mid}: no slug uses it ({LOCAL}/models.d/{info['file']})"))
+            unused.append({"kind": "model", "id": mid, "path": f"{LOCAL}/models.d/{info['file']}"})
     for mid, info in attached.items():
         info["slugs"] = users(lambda e, m=mid: e.get("model") == m)
         used = {v for s in info["slugs"] for v in
                 [entries[s].get("weights_variant")] + list(entries[s].get("weights_companions") or [])}
         info["unused_variants"] = [v for v in info["variants"] if v not in used]
+        path = f"{LOCAL}/extends.d/{info['file']}"
         if not info["slugs"]:
             problems.append(("unused", f"extends.d/{info['file']}: no slug is attached to {mid}"))
-        for v in info["unused_variants"]:
-            problems.append(("unused", f"extends.d/{info['file']}: variant {v!r} is used by no slug"))
+            unused.append({"kind": "extension", "id": mid, "path": path})
+        else:
+            for v in info["unused_variants"]:
+                problems.append(("unused", f"extends.d/{info['file']}: variant {v!r} is used by no slug"))
+                unused.append({"kind": "variant", "id": mid, "variant": v, "path": path})
+    # Only the compose layout (composes/<model>/<engine-dir>/compose/…): a file a
+    # compose mounts, a patch or a config beside it, can be .yml too.
     comp_root = local / "composes"
     if comp_root.is_dir():
-        for p in sorted(comp_root.rglob("*.yml")):
+        for p in sorted(comp_root.glob("*/*/compose/**/*.yml")):
             rel = str(p.relative_to(root))
             if rel not in used_composes:
                 problems.append(("unused", f"{rel}: no entry uses this compose"))
+                unused.append({"kind": "compose", "path": rel})
 
     return {"layer": LOCAL, "engines": engines, "models": models, "attached": attached,
-            "slugs": slugs, "problems": [{"kind": k, "what": w} for k, w in problems]}
+            "slugs": slugs, "problems": [{"kind": k, "what": w} for k, w in problems],
+            "unused": unused}
 
 
 def render(inv: dict) -> str:
