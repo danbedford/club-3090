@@ -42,6 +42,12 @@ fi
 [[ "$out" == *"[preflight] diagnose-profile nonexistent/slug-gone"* ]] \
   || fail "unknown-slug run never invoked diagnose-profile on the slug"
 [[ "$out" == *"gate(s) FAILED."* ]] || fail "unknown-slug run had no failure summary"
+# The catalog rules run on a curated (non-local) slug and count against it: a
+# slug they cannot check is a failure, never a pass.
+[[ "$out" == *"[preflight] catalog rules nonexistent/slug-gone"* ]] \
+  || fail "unknown-slug run never invoked the catalog rules"
+[[ "$out" == *"✗"*"catalog rules nonexistent/slug-gone"* ]] \
+  || fail "catalog rules that could not run were not recorded as a failure"
 [[ "$out" == *"remains authoritative before commit"* ]] \
   || fail "full-suite note missing from unknown-slug run"
 

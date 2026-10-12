@@ -85,6 +85,15 @@ COMPOSE_TEXT = (
     '      - "${PORT:-20242}:8000"\n'
 )
 
+# The same compose for a llama.cpp slug. The container name has to read as the
+# slug's engine family (catalog_rules container-family, docs/ADDING_ENGINES.md
+# → CONTRACT — naming), so the llama fixture cannot reuse the vllm one.
+LLAMA_COMPOSE_TEXT = (
+    COMPOSE_TEXT.replace("  vllm:\n", "  llamacpp:\n")
+    .replace("vllm-my-model-dual", "llamacpp-my-model-dual")
+    .replace('"${PORT:-20242}:8000"', '"${PORT:-20242}:8080"')
+)
+
 
 def _profile_text(**over) -> str:
     parts = [
@@ -347,7 +356,7 @@ class TestHappyPath:
         # (ADDING_MODELS Step 3).
         llama_slug = f"llamacpp/{MID}-dual-{QUANT}"
         _seed_local(root, entry_kwargs=kw, slug=llama_slug)
-        (root / local_compose).write_text(COMPOSE_TEXT, encoding="utf-8")
+        (root / local_compose).write_text(LLAMA_COMPOSE_TEXT, encoding="utf-8")
         out = tmp_path / "bundle"
         res = _run_cli(root, out)
         assert res.returncode == 0, res.stderr + res.stdout
@@ -375,6 +384,26 @@ class TestRefusals:
         res = _run_cli(root, tmp_path / "bundle")
         assert res.returncode == 3
         assert "does not match the namespace implied by its compose path" in res.stderr
+        assert not (tmp_path / "bundle").exists()
+
+    def test_container_from_another_engine_family_refused(self, root, tmp_path):
+        # A llama.cpp slug whose compose still names its container `vllm-…` —
+        # the copy-a-sibling mistake. Discovery and engine-kind would read the
+        # running container as vLLM, so the export refuses it as a required
+        # catalog rule (catalog_rules container-family).
+        kw = _entry_kwargs()
+        kw["engine"] = "llama-cpp-local"
+        kw.pop("kvcalc_key")
+        kw["compose_path"] = (
+            f"scripts/lib/profiles-local/composes/{MID}/llama-cpp/compose/single/"
+            "unsloth-q4km/base.yml"
+        )
+        _seed_local(root, entry_kwargs=kw, slug=f"llamacpp/{MID}-dual-{QUANT}")
+        (root / kw["compose_path"]).write_text(COMPOSE_TEXT, encoding="utf-8")
+        res = _run_cli(root, tmp_path / "bundle")
+        assert res.returncode == 3
+        assert "container-family" in res.stderr
+        assert "vllm-my-model-dual" in res.stderr
         assert not (tmp_path / "bundle").exists()
 
     def test_removed_local_namespace_refused_with_the_fix_named(self, root, tmp_path):

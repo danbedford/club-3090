@@ -104,8 +104,15 @@ fi
 [[ -e "$EP0" ]] && { echo "  FAIL a second --dry-run wrote the engine profile"; rc=1; }
 
 # 3. round trip
-if scripts/catalog.sh register --compose "$C" --engine their-engine --engine-type llama.cpp --weights "$W" --root "$TMP" -y >/dev/null 2>&1; then
+if reg_out="$(scripts/catalog.sh register --compose "$C" --engine their-engine --engine-type llama.cpp --weights "$W" --root "$TMP" -y 2>&1)"; then
   REG="$TMP/scripts/lib/profiles-local/registry.local.json"
+  # register runs the catalog rules as ADVISORY: they print (this compose breaks
+  # several, e.g. it has no container_name) and the register still succeeds.
+  if [[ "$reg_out" == *"[catalog-rules] their-engine/byo-probe:"* && "$reg_out" == *"container-family"* ]]; then
+    echo "  ok   register reported the catalog rules and still succeeded (advisory)"
+  else
+    echo "  FAIL register did not report the catalog rules for the new slug"; rc=1
+  fi
   # A registry entry alone proves little: `register` DERIVES the compose path and
   # model id, so a derivation bug can write an entry pointing at files that were
   # never created. Assert the artifacts exist and that the entry is USABLE.

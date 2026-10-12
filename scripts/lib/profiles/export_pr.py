@@ -267,6 +267,34 @@ def completeness_gaps(root: Path, state: dict) -> list[str]:
     return gaps
 
 
+def catalog_rule_gaps(root: Path, state: dict, *, network: bool = False) -> list[str]:
+    """The catalog rules (scripts/lib/profiles/catalog_rules.py) as export gaps: a
+    required rule that fails, and with --network one that could not be checked.
+    Advisory findings print but never refuse."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import catalog_rules
+    finally:
+        sys.path.pop(0)
+    if catalog_rules.yaml is None:
+        return ["catalog rules need PyYAML (pip install pyyaml)"]
+    registry = registry_module(root).get_registry(str(root))
+    gaps: list[str] = []
+    for e in state["entries"]:
+        try:
+            findings = catalog_rules.check_slug(root, e["slug"], dict(e["kwargs"]),
+                                                network=network, registry=registry)
+        except Exception as exc:  # a rule that cannot run refuses; it never passes
+            gaps.append(f"{e['slug']}: the catalog rules could not run: {exc}")
+            continue
+        for f in catalog_rules.blocking(findings, network):
+            gaps.append(f"{e['slug']}: {f.rule}: {f.message} ({f.doc})")
+        for f in findings:
+            if f.level == catalog_rules.ADVISORY and f.state == catalog_rules.FAIL:
+                _info(f"advisory, {e['slug']}: {f.rule}: {f.message}")
+    return gaps
+
+
 def compose_slug_namespace(compose_rel: str) -> str:
     """The registry slug prefix for a local compose path — derived from the
     filesystem engine dir (composes/<id>/<engine>/compose/...)."""
@@ -461,6 +489,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="bundle output directory (default: /tmp)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan, write nothing")
+    ap.add_argument("--network", action="store_true",
+                    help="also run the network catalog rules (weights download from "
+                         "Hugging Face, anonymous image pull); required before a PR")
     ap.add_argument("--check", action="store_true",
                     help="validate completeness only — never writes anything")
     args = ap.parse_args(argv)
@@ -505,6 +536,19 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print(f"  - {gp}", file=sys.stderr)
             return EXIT_COLLISION
         translated = [translated_entry(state, e) for e in state["entries"]]
+        rule_gaps = catalog_rule_gaps(root, state, network=args.network)
+        if rule_gaps:
+            print(
+                f"[export-pr] REFUSED: {mid} breaks {len(rule_gaps)} required catalog "
+                "rule(s) (docs/ADDING_ENGINES.md, docs/ADDING_MODELS.md):",
+                file=sys.stderr,
+            )
+            for gp in rule_gaps:
+                print(f"  - {gp}", file=sys.stderr)
+            return EXIT_COLLISION
+        if not args.network:
+            _info("network rules not run (weights download from Hugging Face, anonymous "
+                  "image pull): re-run with --check --network before opening the PR.")
     except Refusal as exc:
         print(f"[export-pr] REFUSED: {exc}", file=sys.stderr)
         return EXIT_COLLISION
