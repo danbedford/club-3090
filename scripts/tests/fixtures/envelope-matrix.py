@@ -29,11 +29,14 @@ def launcher_allowlist(path):
     # added above them, and the guard then reported two ALLOWLISTED keys as
     # missing. A parser whose coverage shrinks as the thing it parses grows is
     # worse than no parser: it fails in the direction that looks like a real bug.
+    # An arm can name several keys (`VLLM_NIGHTLY_SHA|VLLM_IMAGE|…)`, #1633). Reading
+    # only single-key arms dropped every image var, and the guard reported all of them
+    # as unallowlisted.
     keys = set()
     for l in txt[i:]:
-        m = re.match(r"\s+([A-Z][A-Z0-9_]*)\)", l)
+        m = re.match(r"\s+([A-Z][A-Z0-9_]*(?:\|[A-Z][A-Z0-9_]*)*)\)", l)
         if m:
-            keys.add(m.group(1))
+            keys.update(m.group(1).split("|"))
         if re.match(r"\s+esac\b", l) and keys:
             break
     else:

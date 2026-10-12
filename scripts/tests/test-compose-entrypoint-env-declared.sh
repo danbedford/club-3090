@@ -30,8 +30,10 @@ KNOWN = {
 }
 RUNTIME = {"PATH","HOME","HOSTNAME","LD_LIBRARY_PATH","PWD","IFS"}
 
-files=[f for f in subprocess.run(['git','ls-files','models/'],capture_output=True,
-       text=True,encoding='utf-8').stdout.split()
+# Tracked AND not-yet-committed composes (--others): a new compose is checked before
+# its first commit, which is when its knobs are written. Gitignored files stay out.
+files=[f for f in subprocess.run(['git','ls-files','--cached','--others','--exclude-standard',
+       'models/'],capture_output=True,text=True,encoding='utf-8').stdout.split()
        if f.endswith('.yml') and '/_archive/' not in f]
 fails=[]; debt=0; scanned=0
 for f in files:

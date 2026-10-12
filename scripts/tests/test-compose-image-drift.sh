@@ -51,7 +51,9 @@ profiles = load_profiles()
 # Safe to take the first match per compose: verified 0 composes carry >1 FIXED image
 # literal, so there is no sidecar ambiguity. If that changes, compare the literal
 # whose registry/repo matches the engine spec, not merely the first one found.
-pat = re.compile(r'image:\s*\$\{([A-Z_]+_IMAGE):-([^}]+)\}')
+# Digits allowed in the var name: `[A-Z_]+` skipped LLAMACPP_CLUB3090_IMAGE and
+# EXLLAMAV3_IMAGE, so 30 composes went unchecked until 2026-10-12.
+pat = re.compile(r'image:\s*\$\{([A-Z][A-Z0-9_]*_IMAGE):-([^}]+)\}')
 drift, checked, pending, deprecated = [], 0, [], 0
 foreign = []
 by_var = {}
