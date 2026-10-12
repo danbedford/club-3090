@@ -113,6 +113,10 @@ try:  # package context
 except ImportError:  # direct-script context
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from club_config import load as load_config
+try:  # package context
+    from scripts.lib.profiles import compose_header
+except ImportError:  # direct-script context: this directory is on sys.path
+    import compose_header
 
 
 _MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
@@ -819,6 +823,26 @@ def _restore(snap: dict[Path, Optional[bytes]], stop: Path) -> list[str]:
     return done
 
 
+_LOCAL_CAVEAT = ("registered in the local layer: incubating until it's validated on a rig "
+                 "and exported (docs/BRING_YOUR_OWN.md)")
+
+
+def _local_header(content: str) -> str:
+    """A local entry is always written incubating, so its compose header has to say
+    so: a copied sibling's `Status: ⚠️ …` would otherwise disagree with the entry, and
+    test-compose-status-drift goes red once the slug is exported into a checkout. The
+    compose's own Caveats stay (they still describe the config); ours goes in after
+    Status. A compose with no profile header is left as written (export_pr asks for
+    one)."""
+    if compose_header.status_value(content) is None or compose_header.says(content, _LOCAL_FORCED_STATUS):
+        return content
+    try:
+        return compose_header.set_status(content, compose_header.LABELS[_LOCAL_FORCED_STATUS],
+                                         caveats=_LOCAL_CAVEAT)
+    except compose_header.HeaderError:
+        return content
+
+
 def _write_local(root: Path, spec: dict) -> tuple[Path, Path]:
     """The THREE local-layer artifacts. Returns (profile_path, compose_path)."""
     mid = spec["model_id"]
@@ -853,6 +877,7 @@ def _write_local(root: Path, spec: dict) -> tuple[Path, Path]:
             raise InternalError(f"could not write {profile_path}: {exc}")
 
     # ── Write 2/3: the compose ──────────────────────────────────────────────
+    spec["compose"]["content"] = _local_header(spec["compose"]["content"])
     try:
         compose_abs.parent.mkdir(parents=True, exist_ok=True)
         compose_abs.write_text(spec["compose"]["content"], encoding="utf-8")

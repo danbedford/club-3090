@@ -13,8 +13,9 @@
 #   3. --dry-run lists the changes and writes nothing (no gate needed)
 #   4. a real apply: the compose added at its core path, the entry merged as a
 #      core entry, the variant added with the profile's comments intact, the
-#      disk counts raised, registry.yaml canonical, nothing else touched; a
-#      header/status disagreement shows as a new test-compose-status-drift FAIL
+#      disk counts raised, registry.yaml canonical, nothing else touched; the
+#      header `register` wrote agrees with the entry, so test-compose-status-drift
+#      stays green (it went red here until register made the header say incubating)
 #   5. a guard already red before the apply is reported as such, not as new
 #   6. a failed check after the write puts the target back exactly
 set -uo pipefail
@@ -177,14 +178,12 @@ changed="$(git -C "$T" status --porcelain --untracked-files=all | sort | tr '\n'
 want="$(printf '%s\n' " M $PROFILE" " M scripts/lib/profiles/registry.yaml" " M scripts/tests/test-compose-registry-disk.sh" "?? $COMPOSE" | sort | tr '\n' '|')"
 [[ "$changed" == "$want" ]] && ok "exactly those four paths changed" || fail "changed: $changed"
 [[ "$out" == *"ok   test-compose-registry-disk"* && "$out" == *"ok   test-model-weights-registry"* \
-   && "$out" == *"ok   test-compose-mounts-resolve"* \
-   && "$out" == *"FAIL test-compose-status-drift"* && "$out" == *"'incubating') consistent with compose header ('caveats')"* ]] \
-  && ok "guards reported: the header/status disagreement shows as a new FAIL" || fail "guards: $out"
+   && "$out" == *"ok   test-compose-mounts-resolve"* && "$out" == *"ok   test-compose-status-drift"* \
+   && "$out" != *"red above"* ]] \
+  && ok "guards in the target all green, status drift included" || fail "guards: $out"
 [[ -f "$TMP/out-t-refuse/PR_BODY.md" ]] && ok "the bundle (PR_BODY.md) is written beside it" || fail "no PR_BODY.md"
 
-# 5. already red before: reported as such. The header now agrees with the entry.
-LC="$R/scripts/lib/profiles-local/composes/$CM/vllm/compose/dual/own-awq/base.yml"
-sed -i -E 's/^(#[[:space:]]+Status:[[:space:]]+).*/\1🐣 Incubating/' "$LC"
+# 5. already red before: reported as such.
 T3="$(target t-baseline)"; git -C "$T3" rm -rq kv-offload; commit_in "$T3" "drop kv-offload"
 out="$(apply_ "$T3")"; code=$?
 [[ $code -eq 0 && "$out" == *"--   test-compose-mounts-resolve: red before the apply too"* \
