@@ -23,6 +23,8 @@
 #                         [--relation R --base B --base-version V --source URL
 #                          --source-ref REF] [--display-name S] [--min-sm N]
 #                         [--dry-run] [-y]      an engine on its own, before its slugs
+#   catalog.sh unregister-engine --id ID [--dry-run] [-y]
+#                         a local engine no local slug runs on
 #
 #   --root <dir>  operate on a throwaway tree instead of this checkout (tests).
 #
@@ -38,7 +40,7 @@ ROOT="$PWD"
 die() { printf '[catalog] %s\n' "$*" >&2; exit 2; }
 
 usage() {
-  sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -49,6 +51,9 @@ SUB="$1"; shift
 # (which refuses anything it doesn't know).
 if [[ "$SUB" == "register-engine" ]]; then
   exec python3 scripts/lib/profiles/register_engine.py "$@"
+fi
+if [[ "$SUB" == "unregister-engine" ]]; then
+  exec python3 scripts/lib/profiles/unregister_engine.py "$@"
 fi
 
 COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" HFREPO="" ETYPE="" MINSM="" TO="" WVARIANT=""; declare -a SETS=()
@@ -122,7 +127,7 @@ if any(isinstance(e, dict) and e.get("engine") == engine for e in still.values()
 m = re.search(r"(?m)^display_name:\s*(.*)$", prof.read_text(encoding="utf-8"))
 if REGISTER_SIDE_EFFECT_MARK not in (m.group(1) if m else ""):
     print(f"[catalog] kept engines.d/{engine}.yml: it was registered on its own "
-          f"(register-engine); delete the file when you no longer want it")
+          f"(register-engine); remove it with catalog.sh unregister-engine --id {engine}")
     raise SystemExit(0)
 prof.unlink()
 print(f"[catalog] removed the now-unused local engine profile: engines.d/{engine}.yml")
@@ -688,5 +693,5 @@ PY
     ;;
 
   -h|--help) usage 0 ;;
-  *) die "unknown subcommand: $SUB (expected register | register-engine | unregister | rename | update)" ;;
+  *) die "unknown subcommand: $SUB (expected register | register-engine | unregister | unregister-engine | rename | update)" ;;
 esac

@@ -305,8 +305,9 @@ bash scripts/catalog.sh register-engine --id vllm-myfork --type vllm \
   - Without `--kv-formats`, `--families` or `--weight-formats`, `diagnose-profile` reports
     those checks failing for every slug on the engine.
   - Without the lineage flags, the engine registers but can't be exported for a PR yet.
-- `unregister` keeps an engine registered this way when its last slug goes, and deletes
-  the file only if you do.
+- `unregister` keeps an engine registered this way when its last slug goes. Remove it
+  with `catalog.sh unregister-engine --id <id>`, which refuses while any local slug
+  still runs on it and names the `unregister` commands for those slugs.
 
 To remove one again:
 

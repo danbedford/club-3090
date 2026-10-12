@@ -14,6 +14,9 @@
 #   4. unregister keeps an engine registered on purpose, and still removes one
 #      `register` wrote as a side effect, found by the entry's engine, not the
 #      slug prefix
+#   5. unregister-engine removes a local engine no slug runs on, and refuses a
+#      curated one, an unknown one, and one a slug still runs on (naming the
+#      `unregister` commands); --dry-run removes nothing
 set -uo pipefail
 export CLUB3090_CONFIG_DIR=/nonexistent/club-3090-test-config   # tests never read your real settings (#1466)
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -164,6 +167,33 @@ bash scripts/catalog.sh unregister --slug custom/side-model --root "$R" -y >/dev
 [[ ! -e "$ENG/side-engine.yml" ]] \
   && ok "a side-effect profile is removed with its last slug, though the slug prefix (custom/) isn't the engine" \
   || fail "side-effect engine profile leaked after unregister"
+
+# 5. unregister-engine
+unreg_engine() { bash scripts/catalog.sh unregister-engine --root "$R" -y "$@" 2>&1; }
+out="$(unreg_engine --id vllm-stable)"; code=$?
+[[ $code -eq 3 && "$out" == *"curated engine"* ]] && ok "unregister-engine refuses a curated engine" \
+  || fail "curated engine (rc=$code): $out"
+out="$(unreg_engine --id no-such-engine)"; code=$?
+[[ $code -eq 3 && "$out" == *"no engine 'no-such-engine'"* ]] && ok "unregister-engine refuses an unknown id" \
+  || fail "unknown id (rc=$code): $out"
+out="$(unreg_engine --id vllm-bare)"; code=$?
+if [[ $code -eq 3 && "$out" == *"catalog.sh unregister --slug vllm-bare/bare-model"* && -f "$ENG/vllm-bare.yml" ]]; then
+  ok "unregister-engine refuses while a slug runs on it, naming the command for that slug"
+else fail "engine in use (rc=$code): $out"; fi
+out="$(unreg_engine --id vllm-myfork --dry-run)"; code=$?
+[[ $code -eq 0 && -f "$ENG/vllm-myfork.yml" ]] && ok "unregister-engine --dry-run removes nothing" \
+  || fail "dry-run (rc=$code): $out"
+out="$(unreg_engine --id vllm-myfork)"; code=$?
+res="$(cd "$R" && python3 -c "
+from scripts.lib.profiles.compat import load_profiles
+print('vllm-myfork' in load_profiles().engines)" 2>&1 | command grep -v '^\[compat\]')"
+if [[ $code -eq 0 && "$out" == *"ENGINE_REMOVED vllm-myfork"* && ! -e "$ENG/vllm-myfork.yml" && "$res" == "False" ]]; then
+  ok "unregister-engine removes an engine no slug runs on; the profiles still load"
+else fail "removal (rc=$code): $out / $res"; fi
+bash scripts/catalog.sh unregister --slug vllm-bare/bare-model --root "$R" -y >/dev/null 2>&1
+out="$(unreg_engine --id vllm-bare)"; code=$?
+[[ $code -eq 0 && ! -e "$ENG/vllm-bare.yml" ]] && ok "once its last slug is unregistered, the engine goes too" \
+  || fail "after its slug (rc=$code): $out"
 
 [[ $rc -eq 0 ]] && echo "PASS: catalog.sh register-engine" || echo "FAIL: test-catalog-register-engine"
 exit $rc

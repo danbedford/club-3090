@@ -16,7 +16,8 @@ scripts/lib/profiles-local/
 ├── models.d/<id>.yml    ModelProfile YAML — same schema as scripts/lib/profiles/models/
 ├── extends.d/<id>.yml   slugs attached to a CURATED model (see "Extending a core model")
 ├── engines.d/<id>.yml   engine profiles — same schema as scripts/lib/profiles/engines/
-│                        (`catalog.sh register-engine`, or `register` for an unknown engine)
+│                        (`catalog.sh register-engine`, or `register` for an unknown engine;
+│                        `catalog.sh unregister-engine` removes one no slug runs on)
 ├── composes/<id>/...    your compose files (same profile-schema layout as models/<id>/)
 └── registry.local.json  registry entries: { "<slug>": { …_entry kwargs… } }
 ```
