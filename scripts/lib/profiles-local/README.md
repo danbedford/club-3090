@@ -36,8 +36,8 @@ That writes all three artifacts above and prints `PROMOTE_OK <slug>`.
 ## Removing a local model
 
 ```
-python3 scripts/lib/profiles/demote.py --slug local/<name>            # asks first
-python3 scripts/lib/profiles/demote.py --slug local/<name> --dry-run  # show the plan
+python3 scripts/lib/profiles/demote.py --slug <engine>/<name>            # asks first
+python3 scripts/lib/profiles/demote.py --slug <engine>/<name> --dry-run  # show the plan
 ```
 
 Removes all three artifacts and prints `DEMOTE_OK <slug>`. It takes the
@@ -48,7 +48,8 @@ compose no longer exists.
 
 It only ever touches this layer. There is no `--layer core`: a curated entry
 lives in git-tracked files and git is its removal tool, so asking to remove a
-non-`local/` slug is refused before anything is read. If two local slugs share a
+slug that isn't in this layer is refused before anything is read (a curated one is
+named as such). If two local slugs share a
 model id (only slugs attached to a core model can, see below), the shared compose
 tree is **kept** and only the slug you named is unregistered. An `extends.d` file
 is never removed by demote.
@@ -63,7 +64,7 @@ is never removed by demote.
 
    ```json
    {
-     "local/my-model-dual-autoround-int4": {
+     "vllm/my-model-dual-autoround-int4": {
        "model": "my-model",
        "weights_variant": "autoround-int4",
        "workload": "long-ctx-single",
@@ -121,10 +122,15 @@ variants, for the curated `models/<id>.yml` (see below).
 
 ## Rules
 
-- **Slug namespace:** local slugs MUST start with `local/`. The loader refuses
-  anything else, and refuses any slug or model id that collides with a core
-  catalog row (loudly — a broken `registry.local.json` fails the launch rather
-  than silently shrinking the catalog).
+- **Slug shape:** local slugs are `<engine>/<name>`, the same shape as curated
+  ones; the entry's `origin` field is what marks them local. The old `local/`
+  prefix was removed (#1202) and is refused, with the replacement named. The
+  loader refuses a malformed `registry.local.json`, a duplicate local slug, and a
+  local model id that is a curated model's unless `extends.d/` attaches it —
+  loudly, so a broken file fails the launch rather than silently shrinking the
+  catalog. A local slug whose name a curated one also uses is **not** an error:
+  core wins the lookup and yours is marked shadowed (rename it with
+  `catalog.sh rename`).
 - **Status:** local entries start at `"incubating"` — hidden from
   `switch.sh --list`, launched only with `--force` (see the Status enum in
   `compose_registry.py`). Promote up the enum locally as your model validates.
@@ -135,9 +141,9 @@ variants, for the curated `models/<id>.yml` (see below).
   model can never become someone's auto-default.
 - **No core writes:** adding a model to the CURATED catalog is a maintainer PR.
   `promote.py --layer core` exists for that workflow and is double-gated
-  (`--layer core` **and** `C3_ALLOW_CORE_PROMOTE=1`); it edits
-  `compose_registry.py` directly and should only ever run in a maintainer
-  checkout on a clean branch (git is the rollback).
+  (`--layer core` **and** `C3_ALLOW_CORE_PROMOTE=1`); it writes the curated
+  files and merges the entry into `registry.yaml`, and should only ever run in
+  a maintainer checkout on a clean branch (git is the rollback).
 
 ## Uninstall
 
