@@ -30,8 +30,8 @@
 #   scripts/engine-pin-bump.sh vllm-stable vllm/vllm-openai:v0.25.0 --check
 #   scripts/engine-pin-bump.sh llama-cpp-local server-cuda-b9967 --check
 #
-#   <engine-id> is the profile `id:` (NOT the filename — llama-cpp-mainline.yml
-#   has id `llama-cpp-local`). Digest-pinned engines (beellama) require a full
+#   <engine-id> is the profile `id:`, which is also its filename
+#   (engines/<id>.yml). Digest-pinned engines (beellama) require a full
 #   `repo@sha256:...` ref; for those prefer scripts/beellama-pin-bump.sh which
 #   also discovers the newest tag.
 #

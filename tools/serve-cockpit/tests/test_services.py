@@ -4611,7 +4611,7 @@ class TestServeOverrides:
         # a totally different engine → a totally different KV family
         # fp16 is llama.cpp's default KV (no -ctk/-ctv); added to the engine profile in
         # #905 for the DeepSeek-Flash CPU-offload slugs, which serve on it.
-        assert cd.engine_kv_formats("llama-cpp-mainline") == ["fp16", "q4_0", "q5_0", "q8_0", "k8v4"]
+        assert cd.engine_kv_formats("llama-cpp-local") == ["fp16", "q4_0", "q5_0", "q8_0", "k8v4"]
         # the editor's KV options come from the engine, not a generic list
         assert cd.serve_override_defaults("vllm/dual", "org/Foo")["KV_OPTIONS"] == vk
 

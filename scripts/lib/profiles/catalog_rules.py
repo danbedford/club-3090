@@ -66,9 +66,7 @@ REQUIRED, ADVISORY = "required", "advisory"
 LINEAGE_NO_SOURCE_REF = {
     "vllm-lmcache": "LMCache's v0.4.7-cu129 tag was re-pushed and the image carries no revision label",
 }
-FILENAME_NOT_ID = {
-    "llama-cpp-local": "llama-cpp-mainline.yml predates the rule; tools that open profiles by filename skip it",
-}
+FILENAME_NOT_ID: dict[str, str] = {}   # was llama-cpp-local (llama-cpp-mainline.yml), renamed 2026-10-12
 _NIGHTLY = "a nightly tag upstream purges; no live slug runs on it"
 IMAGE_PIN_EXCEPTIONS = {
     "vllm-nightly-clean": _NIGHTLY,

@@ -43,8 +43,7 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 # Registry `engine:` id → family. Ids are prefixed by family everywhere in the
 # catalog (vllm-stable, sglang-stable, llamacpp-club3090-v1.6), with two
 # historical exceptions that are llama.cpp builds under their own names:
-# `llama-cpp-local` (the mainline profile's id — note the FILE is
-# llama-cpp-mainline.yml; it is the only profile whose basename != its id) and
+# `llama-cpp-local` (the mainline profile, engines/llama-cpp-local.yml) and
 # `beellama-local`.
 #
 # An id no prefix arm recognises falls back to its engine profile's `type:`
@@ -70,8 +69,8 @@ engine_kind_from_engine_id() {
 
 # The engine profile whose `id:` equals $1 → its `type:` → family. Core profiles
 # first, then the local layer (profiles-local/engines.d), the loader's
-# precedence. Matched on the `id:` line, not the filename, because
-# llama-cpp-mainline.yml declares `id: llama-cpp-local`. `type` is not
+# precedence. Matched on the `id:` line rather than the filename, so a misnamed
+# profile still resolves (the profile-filename catalog rule flags one). `type` is not
 # validated anywhere, so accept the spellings people write and map anything
 # else to unknown.
 _engine_kind_from_profile_type() {

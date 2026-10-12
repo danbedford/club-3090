@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     DeepSeek-V4-Flash-0731 (284B MoE, unsloth UD-Q8_K_XL — MXFP4
 #              experts + BF16 attention, 151 GB across 5 shards)
-#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec; external DSpark drafter)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec; external DSpark drafter)
 #   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
 #   Drafter:   DSpark n=5 external (--spec-type draft-dspark) — runtime landed in
 #              ggml-org#25784; ABSENT in b9967, so this slug REQUIRES b10236+

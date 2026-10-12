@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     DeepSeek-V4-Flash-0731 (284B MoE, unsloth UD-Q8_K_XL, 151 GB)
-#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec; external DSpark drafter)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec; external DSpark drafter)
 #   Topology:  4× 24 GB PCIe (layer-split -ts 1,1,1,1)
 #   Drafter:   DSpark n=5 external (--spec-type draft-dspark) — REQUIRES b10236+
 #              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables

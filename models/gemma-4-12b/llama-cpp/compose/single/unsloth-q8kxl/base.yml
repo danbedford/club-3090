@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Gemma-4-12B-it (gemma4_unified — Unsloth UD-Q8_K_XL GGUF, 13 GB)
-#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-mainline.yml install.spec)
+#   Engine:    llama.cpp mainline — the shared `llama-cpp-local` pin (build = engines/llama-cpp-local.yml install.spec)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   none (no-spec). MTP needs gemma4-assistant arch (llama.cpp #23398, WIP) → mtp.yml (gated).
 #   KV:        q8_0 K + q8_0 V (FA-supported on STOCK ggml-org — no FA_ALL_QUANTS — and half of

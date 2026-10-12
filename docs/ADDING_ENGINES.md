@@ -75,7 +75,7 @@ Several of our tools identify an engine's family by **prefix**. The engine-kind 
 | Thing | Rule | Precedent |
 |---|---|---|
 | Engine id | `<family>-<name>` for a derivative or fork. `scripts/lib/engine-kind.sh` matches ids by prefix (`vllm*`, `sglang*`/`sgl-*`, `exllamav3*`/`exl3*`, `llama-cpp*`/`llamacpp*`/`ik-llama*`/`beellama*`), and falls back to the profile's `type` for any other id | `vllm-lmcache`, `llamacpp-club3090-v1.6` |
-| Profile filename | equals the id: `engines/<id>.yml`. Four tools open the profile by filename, and `llama-cpp-mainline.yml` (id `llama-cpp-local`) is silently skipped by all of them | — |
+| Profile filename | equals the id: `engines/<id>.yml`. Several tools open a profile by filename (c3, `generate_compose.py`, `list-image-pins.sh`, `test-engine-label-matches-compose`), so a misnamed profile is silently skipped by all of them; the `profile-filename` catalog rule refuses one | every core profile (the last exception, `llama-cpp-mainline.yml` → `llama-cpp-local.yml`, was renamed 2026-10-12) |
 | Slug prefix | a vLLM derivative keeps `vllm/`, because switch.sh runs its hardware and GPU-fit preflights only for `vllm/` slugs. A fork may take its own prefix | `vllm/…` on `vllm-lmcache`; `llamacpp-club3090/…`, `llama-cpp-prism/…` |
 | Compose directory | `models/<model>/<engine-dir>/compose/…`, one directory per engine profile family | `vllm-lmcache/`, `llamacpp-club3090/`, `llama-cpp-prism/` |
 | `container_name` | starts with the family's container prefix (`vllm-`, `sglang-`, `llama-cpp-`, `tabbyapi-`, …), so discovery and the kind resolver recognise it | — |

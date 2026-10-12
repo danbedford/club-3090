@@ -65,7 +65,7 @@ for eid in core_ids:
             fails.append(f"engine {eid}: image-anonymous passed without --network")
 
 # ── 2. exception lists: shrink only, and each entry still applies ───────────
-ALLOWED = {"LINEAGE_NO_SOURCE_REF": {"vllm-lmcache"}, "FILENAME_NOT_ID": {"llama-cpp-local"},
+ALLOWED = {"LINEAGE_NO_SOURCE_REF": {"vllm-lmcache"}, "FILENAME_NOT_ID": set(),
            "IMAGE_PIN_EXCEPTIONS": {"vllm-nightly-clean", "vllm-nightly-dflash", "vllm-nightly-full",
                                     "vllm-nightly-mtp"}}
 for name, allowed in ALLOWED.items():

@@ -415,8 +415,8 @@ def engine_profile_image(root, engine_id):
     """`install.spec` for an engine id — the image the LAUNCHERS inject.
 
     Plain-text parse, no PyYAML (same constraint as the launcher table path).
-    The file basename is not the id for every profile (llama-cpp-mainline.yml
-    declares `id: llama-cpp-local`), so match on the declared `id:`.
+    Matches on the declared `id:` rather than the file name, so a misnamed profile
+    still resolves (the profile-filename catalog rule flags one).
     """
     d = Path(root) / "scripts" / "lib" / "profiles" / "engines"
     if not d.is_dir():
