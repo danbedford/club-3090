@@ -27,17 +27,18 @@ before you put an agent on it.
 |  | `vllm/gemma-12b-qat-w4a16-single` | 🧪 experimental | 262144 | [single/qat-w4a16/mtp.yml](../models/gemma-4-12b/vllm/compose/single/qat-w4a16/mtp.yml) | [#412](https://github.com/noonghunna/club-3090/discussions/412) |  |
 | **Gemma 4 26B-A4B (MoE)** | `vllm/gemma-26ba4b-single` ⭐ | ⚠️ caveats | 176000 | [single/awq/int8.yml](../models/gemma-4-26b-a4b/vllm/compose/single/awq/int8.yml) | — |  |
 | **MiMo V2.6 Distill Qwen 9B (Xiaomi)** | `llamacpp/mimo9b-single-vision` ⭐ | ⚠️ caveats | 262144 | [single/bartowski-q8/full-vision.yml](../models/mimo-v2.6-9b/llama-cpp/compose/single/bartowski-q8/full-vision.yml) | — |  |
-| **Ornith 1.0 9B (DeepReinforce)** | `ik-llama/ornith9b-single` | 🧪 experimental | 262144 | [single/deepreinforce-q4km/ngram.yml](../models/ornith-1.0-9b/ik-llama/compose/single/deepreinforce-q4km/ngram.yml) | [#478](https://github.com/noonghunna/club-3090/discussions/478) |  |
 | **Qwen 3.6 27B** | `vllm/minimal` ⭐ | ✅ production | 32768 | [single/autoround-int4/minimal.yml](../models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml) | [#733](https://github.com/noonghunna/club-3090/discussions/733) |  |
 |  | `vllm/qwen-27b-single-nvfp4` | ⚠️ caveats | 65536 | [single/nvfp4/mtp.yml](../models/qwen3.6-27b/vllm/compose/single/nvfp4/mtp.yml) | [#608](https://github.com/noonghunna/club-3090/discussions/608) | needs sm 9.0+ (not a 3090) |
 | **Qwen 3.6 35B-A3B (MoE)** | `vllm/qwen-35b-a3b-single-nvfp4` | ⚠️ caveats | 131072 | [single/nvfp4/fp8.yml](../models/qwen3.6-35b-a3b/vllm/compose/single/nvfp4/fp8.yml) | [#608](https://github.com/noonghunna/club-3090/discussions/608) | needs sm 9.0+ (not a 3090) |
 |  | `vllm/qwen-a3b-preview-single` | 👁️ preview | 8192 | [single/autoround-int4/preview.yml](../models/qwen3.6-35b-a3b/vllm/compose/single/autoround-int4/preview.yml) | — |  |
 | **Qwen 3.8 27B** | `llama-cpp-prism/qwen38-27b-single-ternary-mtp` | 🧪 experimental | 262144 | [single/prism-ternary-mtp/mtp.yml](../models/qwen3.8-27b/llama-cpp-prism/compose/single/prism-ternary-mtp/mtp.yml) | — |  |
 |  | `llamacpp/qwen38-27b-single-iq4xs` | 🧪 experimental | 262144 | [single/unsloth-iq4xs/q4kv-vision.yml](../models/qwen3.8-27b/llama-cpp/compose/single/unsloth-iq4xs/q4kv-vision.yml) | [#993](https://github.com/noonghunna/club-3090/discussions/993) |  |
+|  | `sgl/qwen38-27b-single-fast` | 🧪 experimental | 262144 | [single/autoround-int4/mtp.yml](../models/qwen3.8-27b/sglang/compose/single/autoround-int4/mtp.yml) | [#1245](https://github.com/noonghunna/club-3090/discussions/1245) |  |
+|  | `vllm/qwen38-27b-single-fast` | 🧪 experimental | 262144 | [single/autoround-int4/mtp.yml](../models/qwen3.8-27b/vllm/compose/single/autoround-int4/mtp.yml) | [#1024](https://github.com/noonghunna/club-3090/discussions/1024) |  |
 |  | `vllm/qwen38-27b-single-nvfp4` | 🧪 experimental | 65536 | [single/nvfp4/mtp.yml](../models/qwen3.8-27b/vllm/compose/single/nvfp4/mtp.yml) | [#1024](https://github.com/noonghunna/club-3090/discussions/1024) |  |
 |  | `llama-cpp-prism/qwen38-27b-single-ternary-pq2` | 🐣 incubating | 262144 | [single/prism-ternary-pq2/ternary.yml](../models/qwen3.8-27b/llama-cpp-prism/compose/single/prism-ternary-pq2/ternary.yml) | — |  |
 
-14 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
+15 slugs. ⭐ = the model's default for this topology (`bash scripts/switch.sh <model>/default`). Generated from the registry by `tools/docs/slug_tables.py`; don't edit by hand.
 <!-- END GENERATED: slug-table single -->
 
 ## Launch

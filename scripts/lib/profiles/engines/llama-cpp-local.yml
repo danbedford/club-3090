@@ -11,10 +11,9 @@ type: llama.cpp
 # read IK_LLAMA_IMAGE instead. ik_llama is a SEPARATE ENGINE -- its builds take
 # --merge-qkv / --fit / --fit-margin / --cache-ram, none of which exist here, and
 # the two forks disagree on --no-mmap vs --load-mode in opposite directions. Those
-# slugs are registered here only because ik-llama HAS NO ENGINE PROFILE. The fix
-# is to add one (two, in fact: the ik slugs pin two different digests), NOT to
-# split this profile -- an earlier version of this comment said 'split', which
-# misnamed the cause.
+# slugs are registered here only because ik-llama HAS NO ENGINE PROFILE, and it
+# won't get one: ik_llama.cpp is out of the catalog (maintainer, 2026-10-12) and
+# every ik-llama/ slug is deprecated, kept as history.
 #
 # Until then a single image var cannot be named here, and keying it off the slug
 # prefix would reintroduce exactly the fragility #1365 removed from the launchers.
@@ -22,7 +21,7 @@ type: llama.cpp
 # install.spec for all 15 mainline ones, so no behaviour is lost), ik slugs are
 # judged against MAINLINE's supported_kv_formats/supported_drafters, and the ik
 # pin logic lives as a bash special case (preflight_ik_llama_image, #633).
-# 13 of the 15 ik slugs are already deprecated, which is why this is not urgent.
+# All 15 ik slugs are deprecated (the last two, the ornith slugs, on 2026-10-12).
 image_env: null
 
 stability: stable

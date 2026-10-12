@@ -14,7 +14,8 @@
 #   Max ctx:   262K (native qwen35moe.context_length). Whole estate ~22 GB/card on dual
 #              (Q8 weights 17.9/16.7 split + KV 2.7 GB + buffers). Measured 2026-06-26.
 #   Genesis:   N/A — Genesis is a vLLM patch system; this is ik_llama GGUF.
-#   Status:    🧪 Experimental
+#   Status:    🗑️ Deprecated
+#   Caveats:   ik_llama.cpp is out of the catalog (maintainer decision): no ik-llama engine profile and no ik slugs are planned, and this slug was registered against the mainline llama-cpp-local profile, which doesn't describe it.
 #   Quality:   8-pack think-OFF 105/150 / think-ON 105/150 (toolcall 13 · instructfollow 12
 #              · structoutput 14 · dataextract 10 · reasonmath 13 · bugfind 15 · hermes 12/20
 #              · cli 16/40) · aider-polyglot-30 15/30 (OFF==ON) (--full, temp 0.6, 2026-06-26).
