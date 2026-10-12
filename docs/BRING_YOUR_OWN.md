@@ -423,7 +423,7 @@ ready-to-commit bundle:
 | You validated | Case | In your local layer | Export spec | The bundle |
 |---|---|---|---|---|
 | a model the catalog doesn't have | 3 | `models.d/<id>.yml` (`catalog.sh register` or `promote.py` wrote it) | `{"model_id": "<id>"}` | `models/<id>.yml`, composes, `registry-entry.yaml`, `PR_BODY.md` |
-| a new slug of a model we ship, on an engine that already serves it | 1 | `extends.d/<id>.yml`, a compose and an entry ([below](#attaching-a-slug-to-a-model-we-ship)) | `{"model_id": "<id>"}` | composes, `registry-entry.yaml`, `weights-snippet-<id>.yaml`, `PR_BODY.md` |
+| a new slug of a model we ship, on an engine that already serves it | 1 | `extends.d/<id>.yml`, a compose and an entry: `catalog.sh register --model <id>` ([below](#attaching-a-slug-to-a-model-we-ship)) | `{"model_id": "<id>"}` | composes, `registry-entry.yaml`, `weights-snippet-<id>.yaml`, `PR_BODY.md` |
 | the same, on an engine that doesn't serve it yet | 2 | the same | the same | the same |
 | an engine we don't ship | engine | `engines.d/<id>.yml` (`catalog.sh register` writes it) and its slugs | `{"engine_id": "<id>"}` | `scripts/lib/profiles/engines/<id>.yml`, its first slugs, `PR_BODY.md` |
 
@@ -517,18 +517,40 @@ the gate open for every run.
 ### Attaching a slug to a model we ship
 
 Cases 1 and 2 serve a model the catalog already has, so the slug attaches to it rather
-than inventing a new model id. Neither `catalog.sh register` nor `promote.py` writes
-this yet, so it takes three files by hand ([profiles-local
-README](../scripts/lib/profiles-local/README.md), "Extending a core model"):
+than inventing a new model id. `register` does that when `--model` names a curated model:
 
-- `scripts/lib/profiles-local/extends.d/<id>.yml`:
-  - `extends: <id>`;
-  - only the **new** weights variants your slug uses (an empty `weights: {}` when it
-    reuses a curated one);
-  - optionally `valid_tp_add`.
-- The compose, under `scripts/lib/profiles-local/composes/<id>/<engine-dir>/compose/<topology>/<quant>/<serving>.yml`.
-  Copy the nearest validated compose for that engine.
-- An entry in `scripts/lib/profiles-local/registry.local.json` whose `model` is the curated id.
+```bash
+# reuse one of its weights variants
+bash scripts/catalog.sh register --compose ./my.yml --engine vllm-stable \
+     --model qwen3.6-27b --weights-variant autoround-int4
+# or bring weights of your own, as a new variant
+bash scripts/catalog.sh register --compose ./my.yml --engine vllm-stable \
+     --model qwen3.6-27b --weights-variant my-awq --weights /path/to/weights --hf-repo org/repo
+```
+
+- **What it writes:**
+  - `scripts/lib/profiles-local/extends.d/<id>.yml`, holding only the **new** variant (or
+    no weights at all when you reuse a curated one) and any GPU count the curated
+    profile doesn't list;
+  - your compose;
+  - the registry entry, whose `model` is the curated id.
+
+  It writes no model profile.
+- **The slug and the compose follow the layout the catalog already uses for that
+  engine:** `vllm-stable` slugs are `vllm/…`, filed under `vllm/`. So the slug exports
+  under the same name. The default slug is `<prefix>/<id>-<topology>-<variant>`;
+  `--slug` names it yourself.
+- **The extension is shared** by every slug attached to that model, and a broken one
+  would stop the profile loader for everything. So the merged file is validated
+  before anything is written, and if a check after the write fails, every file is
+  put back.
+- `--dry-run` shows the plan. `unregister` removes the slug and keeps the extension.
+- **It prints what `export_pr.py` will still need:**
+  - `files:` for a new variant, and its `hf_repo`;
+  - a `kvcalc_key` on a vLLM-type engine, set with `catalog.sh update --slug <slug> --set kvcalc_key=<id>:<profile>`.
+
+The file format, for editing it by hand: [profiles-local
+README](../scripts/lib/profiles-local/README.md), "Extending a core model".
 
 ## See also
 

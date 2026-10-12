@@ -268,20 +268,14 @@ def load_local_engine(root: Path, eid: str, slugs: Optional[list[str]] = None) -
 # ── where core keeps things ─────────────────────────────────────────────────
 
 def _layout(reg_mod) -> tuple[dict[str, set], dict[str, set]]:
-    """From the live curated registry: engine id → {(compose dir, slug prefix)},
-    and compose dir → {slug prefix}."""
-    by_engine: dict[str, set] = {}
-    by_dir: dict[str, set] = {}
-    for slug, e in reg_mod.COMPOSE_REGISTRY.items():
-        if e.get("status") == "deprecated":
-            continue
-        parts = str(e.get("compose_path") or "").split("/")
-        if len(parts) < 4 or parts[0] != "models":
-            continue
-        prefix = slug.split("/", 1)[0]
-        by_engine.setdefault(str(e.get("engine")), set()).add((parts[2], prefix))
-        by_dir.setdefault(parts[2], set()).add(prefix)
-    return by_engine, by_dir
+    """engine id → {(compose dir, slug prefix)}, compose dir → {slug prefix}, from the
+    curated registry (core_layout.py, shared with catalog.sh register)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import core_layout
+    finally:
+        sys.path.pop(0)
+    return core_layout.engine_layout(reg_mod.COMPOSE_REGISTRY)
 
 
 def _local_compose_parts(slug: str, cpath: str) -> tuple[str, str, str]:
