@@ -95,7 +95,7 @@ if [[ $code -eq 0 && "$out" == *"| type: llama.cpp"* && "$out" == *"| image_env:
   ok "--type llamacpp is written as llama.cpp; an allowlisted image_env passes; --dry-run writes nothing"
 else fail "alias / dry-run (rc=$code): $out"; fi
 out="$(reg_engine --id vllm-bare --type vllm --image "$DIGEST" --min-sm 8.6)"; code=$?
-if [[ $code -eq 0 && "$out" == *"export_pr.py needs --relation"* && "$out" == *"fail C10"* ]]; then
+if [[ $code -eq 0 && "$out" == *"export_pr.py needs relation"* && "$out" == *"update-engine --id vllm-bare"* && "$out" == *"fail C10"* ]]; then
   ok "without lineage or capabilities it registers and says what that costs"
 else fail "bare registration (rc=$code): $out"; fi
 
