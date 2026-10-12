@@ -285,6 +285,29 @@ blocks it cannot verify are left **empty** — the stack makes no promises on yo
 Widen them once you have measured. This is exactly how our own fork is registered:
 `llamacpp-club3090` is a distinct `id` with `type: llama.cpp`.
 
+To register the engine first, from what you know rather than from one compose, use
+`register-engine`, then register its slugs with `--engine <id>`:
+
+```bash
+bash scripts/catalog.sh register-engine --id vllm-myfork --type vllm \
+     --image ghcr.io/you/vllm-myfork@sha256:… \
+     --kv-formats fp8_e5m2 --families qwen3-next-hybrid --weight-formats autoround \
+     --relation fork --base vllm --base-version 0.31.0 \
+     --source https://github.com/you/vllm-myfork --source-ref <commit>
+```
+
+- **What's required:** `--type` is what the engine behaves like (`vllm`, `llama.cpp`,
+  `sglang`, `exllamav3`), and `--image` is the image it runs.
+- **What it refuses, before writing:** an id the catalog already has, a KV format no
+  hardware profile lists, and an `--image-env` the launchers don't know. The last would
+  stop every launch of the engine's slugs.
+- **What it warns about:**
+  - Without `--kv-formats`, `--families` or `--weight-formats`, `diagnose-profile` reports
+    those checks failing for every slug on the engine.
+  - Without the lineage flags, the engine registers but can't be exported for a PR yet.
+- `unregister` keeps an engine registered this way when its last slug goes, and deletes
+  the file only if you do.
+
 To remove one again:
 
 ```bash
@@ -427,7 +450,7 @@ ready-to-commit bundle:
 | a model the catalog doesn't have | 3 | `models.d/<id>.yml` (`catalog.sh register` or `promote.py` wrote it) | `{"model_id": "<id>"}` | `models/<id>.yml`, composes, `registry-entry.yaml`, `PR_BODY.md` |
 | a new slug of a model we ship, on an engine that already serves it | 1 | `extends.d/<id>.yml`, a compose and an entry: `catalog.sh register --model <id>` ([below](#attaching-a-slug-to-a-model-we-ship)) | `{"model_id": "<id>"}` | composes, `registry-entry.yaml`, `weights-snippet-<id>.yaml`, `PR_BODY.md` |
 | the same, on an engine that doesn't serve it yet | 2 | the same | the same | the same |
-| an engine we don't ship | engine | `engines.d/<id>.yml` (`catalog.sh register` writes it) and its slugs | `{"engine_id": "<id>"}` | `scripts/lib/profiles/engines/<id>.yml`, its first slugs, `PR_BODY.md` |
+| an engine we don't ship | engine | `engines.d/<id>.yml` (`catalog.sh register-engine`, or `register` as a side effect) and its slugs | `{"engine_id": "<id>"}` | `scripts/lib/profiles/engines/<id>.yml`, its first slugs, `PR_BODY.md` |
 
 A model or an engine we don't have starts with a proposal, and the PR waits for the
 go-ahead: [model proposal](https://github.com/noonghunna/club-3090/issues/new?template=model-proposal.yml),

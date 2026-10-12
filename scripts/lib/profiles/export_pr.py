@@ -528,8 +528,8 @@ def engine_gaps(root: Path, eng: dict, *, network: bool) -> tuple[list[str], lis
         todo.append("set `image_env` so the launchers inject install.spec, and allowlist it "
                     "in both launchers")
     else:
-        for launcher in ("scripts/switch.sh", "scripts/launch.sh"):
-            if image_env not in _pin_allowlist(root / launcher):
+        for launcher, envs in rules.launcher_image_envs(root).items():
+            if image_env not in envs:
                 todo.append(f"add {image_env} to the case arm in "
                             f"`export_variant_engine_pin()` in {launcher}")
     if not eng["states"]:
@@ -542,21 +542,6 @@ def engine_gaps(root: Path, eng: dict, *, network: bool) -> tuple[list[str], lis
         todo.append(f"replace the catalog.sh `notes:` in engines/{eid}.yml with what the "
                     "engine is and where it comes from")
     return gaps, findings, todo
-
-
-def _pin_allowlist(path: Path) -> set[str]:
-    """The image vars a launcher's export_variant_engine_pin() case arm accepts."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return set()
-    m = re.search(r"export_variant_engine_pin\(\)\s*\{(.*?)\n\}", text, re.S)
-    out: set[str] = set()
-    for line in (m.group(1) if m else "").splitlines():
-        arm = re.match(r"\s*([A-Z0-9_|]+_IMAGE[A-Z0-9_|]*)\)", line)
-        if arm:
-            out.update(arm.group(1).split("|"))
-    return out
 
 
 def catalog_rule_gaps(root: Path, state: dict, *, network: bool = False,
