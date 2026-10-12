@@ -18,6 +18,11 @@
 #   catalog.sh unregister --slug <engine>/<name> [--dry-run] [-y]
 #   catalog.sh rename     --slug <old> --to <new>  [--dry-run]
 #   catalog.sh update     --slug <slug> --set K=V  [--dry-run]   (repeatable)
+#   catalog.sh register-engine --id ID --type T --image REF [--image-env VAR]
+#                         [--kv-formats a,b] [--families a,b] [--weight-formats a,b]
+#                         [--relation R --base B --base-version V --source URL
+#                          --source-ref REF] [--display-name S] [--min-sm N]
+#                         [--dry-run] [-y]      an engine on its own, before its slugs
 #
 #   --root <dir>  operate on a throwaway tree instead of this checkout (tests).
 #
@@ -33,12 +38,18 @@ ROOT="$PWD"
 die() { printf '[catalog] %s\n' "$*" >&2; exit 2; }
 
 usage() {
-  sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
 [[ $# -gt 0 ]] || usage 2
 SUB="$1"; shift
+
+# An engine on its own: its flags are its own, so it skips the option loop below
+# (which refuses anything it doesn't know).
+if [[ "$SUB" == "register-engine" ]]; then
+  exec python3 scripts/lib/profiles/register_engine.py "$@"
+fi
 
 COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" HFREPO="" ETYPE="" MINSM="" TO="" WVARIANT=""; declare -a SETS=()
 while [[ $# -gt 0 ]]; do
@@ -68,18 +79,34 @@ done
 case "$SUB" in
   unregister)
     [[ -n "$SLUG" ]] || die "unregister needs --slug <engine>/<name>"
-    python3 scripts/lib/profiles/demote.py --slug "$SLUG" ${RROOT:+--root "$RROOT"} ${DRY:+--dry-run} ${YES:+-y} || exit $?
-    # `register` may have written a LOCAL engine profile for this slug's engine.
-    # demote.py knows nothing about it (engines are not its layer), so removing
-    # the model alone orphans it — and orphans accumulate silently. Drop it only
-    # when NO remaining local row uses that engine, and only from the local layer.
-    [[ -n "$DRY" ]] && exit 0
-    python3 - "${RROOT:-$ROOT}" "$SLUG" <<'PY_ENG' || true
+    # The slug's ENGINE, read from its entry before demote.py removes it. The slug
+    # prefix is not the engine: since #1642 a slug on a curated engine takes core's
+    # prefix (`vllm/…` on vllm-stable), and --slug can name it anything.
+    _eng="$(python3 - "${RROOT:-$ROOT}" "$SLUG" <<'PY_PRE' 2>/dev/null || true
 import json, sys
 from pathlib import Path
+reg = Path(sys.argv[1], "scripts/lib/profiles-local/registry.local.json")
+try:
+    print((json.loads(reg.read_text(encoding="utf-8")).get(sys.argv[2]) or {}).get("engine") or "")
+except Exception:
+    print("")
+PY_PRE
+)"
+    python3 scripts/lib/profiles/demote.py --slug "$SLUG" ${RROOT:+--root "$RROOT"} ${DRY:+--dry-run} ${YES:+-y} || exit $?
+    # `register` may have written a LOCAL engine profile for this slug's engine as a
+    # side effect. demote.py knows nothing about it (engines are not its layer), so
+    # removing the model alone orphans it — and orphans accumulate silently. Drop it
+    # only when NO remaining local row uses that engine, only from the local layer,
+    # and only if `register` wrote it: an engine registered on purpose
+    # (`register-engine`) stays until you remove it.
+    [[ -n "$DRY" || -z "$_eng" ]] && exit 0
+    python3 - "${RROOT:-$ROOT}" "$_eng" <<'PY_ENG' || true
+import json, re, sys
+from pathlib import Path
 
-root, slug = Path(sys.argv[1]), sys.argv[2]
-engine = slug.split("/", 1)[0]
+root, engine = Path(sys.argv[1]), sys.argv[2]
+sys.path.insert(0, str(root / "scripts/lib/profiles"))
+from register_engine import REGISTER_SIDE_EFFECT_MARK  # noqa: E402
 prof = root / "scripts/lib/profiles-local/engines.d" / f"{engine}.yml"
 if not prof.is_file():
     raise SystemExit(0)                       # curated engine, or none written
@@ -90,8 +117,13 @@ if reg.is_file():
         still = json.loads(reg.read_text(encoding="utf-8"))
     except Exception:
         raise SystemExit(0)                   # unreadable: leave it alone, loudly nothing
-if any(str(s).split("/", 1)[0] == engine for s in still):
-    raise SystemExit(0)                       # another local model still needs it
+if any(isinstance(e, dict) and e.get("engine") == engine for e in still.values()):
+    raise SystemExit(0)                       # another local slug still needs it
+m = re.search(r"(?m)^display_name:\s*(.*)$", prof.read_text(encoding="utf-8"))
+if REGISTER_SIDE_EFFECT_MARK not in (m.group(1) if m else ""):
+    print(f"[catalog] kept engines.d/{engine}.yml: it was registered on its own "
+          f"(register-engine); delete the file when you no longer want it")
+    raise SystemExit(0)
 prof.unlink()
 print(f"[catalog] removed the now-unused local engine profile: engines.d/{engine}.yml")
 PY_ENG
@@ -339,47 +371,42 @@ except Exception:
 known = set(_engines)
 
 # ⚠️ TWO VOCABULARIES. compose_facts yields `llama-cpp` (hyphen); engine profiles
-# use `llama.cpp` (dot), and `type` has no enum validation — so passing the
-# derived value through would write something that matches nothing, silently
-# costing the fork its drafter compatibility. Map, never pass through.
-_TYPE_BY_FACT = {"llama-cpp": "llama.cpp", "vllm": "vllm", "ik-llama": "ik-llama"}
+# use `llama.cpp` (dot), and `type` has no enum validation — so passing a value
+# through would write something that matches nothing, silently costing the fork
+# its drafter compatibility. register_engine.normalize_type folds the aliases,
+# shared with `catalog.sh register-engine` so the two write the same profile.
+from scripts.lib.profiles.register_engine import normalize_type, render_engine_yaml, ENGINE_TYPES
 engine_yaml = ""
 if engine not in known:
-    etype = etype_in or _TYPE_BY_FACT.get(f.engine, "")
+    etype = normalize_type(etype_in or f.engine or "")
     if not etype:
-        print(f"[catalog] {engine!r} is not a known engine and its lineage cannot be "
-              f"inferred from image {f.image or '(none)'!r}. Pass --engine-type "
-              f"(llama.cpp | vllm | …) so drafter/feature logic knows what it "
-              f"behaves like.", file=sys.stderr)
+        if etype_in:
+            print(f"[catalog] --engine-type {etype_in!r}: one of {', '.join(ENGINE_TYPES)}.",
+                  file=sys.stderr)
+        else:
+            print(f"[catalog] {engine!r} is not a known engine and its lineage cannot be "
+                  f"inferred from image {f.image or '(none)'!r}. Pass --engine-type "
+                  f"(llama.cpp | vllm | …) so drafter/feature logic knows what it "
+                  f"behaves like.", file=sys.stderr)
         raise SystemExit(2)
-    kvs = [kv] if kv else []
     drafted = ("--model-draft" in text) or (" -md " in text)
-    lines = [
-        "schema_version: 1",
-        f"id: {engine}",
-        f"display_name: {engine} (local, registered from a compose)",
-        f"type: {etype}",
-        "stability: experimental",
-        f"min_sm: {minsm_in or '7.5'}",
-    ]
     # The profile is the source of truth for the image (docs/ADDING_ENGINES.md →
     # CONTRACT — image provenance): `method: docker_image`, and the spec as one
     # unquoted token, since engine-pin-bump.sh and resolved_config.py parse it that
     # way. A `${VAR:-image}` compose default is the image; a bare `${VAR}` names none.
-    # This wrote `method: docker` and a quoted spec, which every image check skipped.
     _img = f.image or ""
     if _img.startswith("${") and ":-" in _img and _img.endswith("}"):
         _img = _img[_img.index(":-") + 2:-1]
-    if _img and "${" not in _img and not any(c.isspace() for c in _img):
-        lines += ["install:", "  method: docker_image", f"  spec: {_img}"]
-    if kvs:
-        lines += ["supported_kv_formats:"] + [f"  - {k}" for k in kvs]
-    lines += ["notes: >",
-              f"  Registered by catalog.sh from {Path(src).name}. Capabilities are",
-              "  EVIDENCED, not assumed: only what the compose demonstrably uses is",
-              "  declared. Widen supported_kv_formats / supported_drafters / features",
-              "  once measured." + ("" if not drafted else " A drafter flag was seen in the compose.")]
-    engine_yaml = "\n".join(lines) + "\n"
+    if "${" in _img or any(c.isspace() for c in _img):
+        _img = ""
+    engine_yaml = render_engine_yaml(
+        eid=engine, display_name=f"{engine} (local, registered from a compose)",
+        etype=etype, min_sm=minsm_in or "7.5", image=_img,
+        kv_formats=[kv] if kv else [],
+        notes=[f"Registered by catalog.sh from {Path(src).name}. Capabilities are",
+               "EVIDENCED, not assumed: only what the compose demonstrably uses is",
+               "declared. Widen supported_kv_formats / supported_drafters / features",
+               "once measured." + ("" if not drafted else " A drafter flag was seen in the compose.")])
 
 fmt = "gguf" if (f.model_path or "").endswith(".gguf") else "safetensors"
 # The emitter splits compose_path on "/compose/" and reads <topology>/<quant>/<file>
@@ -580,7 +607,7 @@ if attach:
         cpath = cpath[:-len("base.yml")] + f"{slug.split('/', 1)[-1]}.yml"
     _tp_add = [_tp] if _tp not in (_core.get("valid_tp") or []) else []
     _etype = (getattr(_engines.get(engine), "type", "") if engine in _engines
-              else (etype_in or _TYPE_BY_FACT.get(f.engine, "")))
+              else (normalize_type(etype_in or f.engine or "") or ""))
     if _etype == "vllm":
         export_notes.append(f"vLLM-type entries need a kvcalc_key: catalog.sh update --slug "
                             f"{slug} --set kvcalc_key={mid}:<profile>")
@@ -661,5 +688,5 @@ PY
     ;;
 
   -h|--help) usage 0 ;;
-  *) die "unknown subcommand: $SUB (expected register | unregister | rename | update)" ;;
+  *) die "unknown subcommand: $SUB (expected register | register-engine | unregister | rename | update)" ;;
 esac

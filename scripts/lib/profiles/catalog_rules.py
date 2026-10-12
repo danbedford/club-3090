@@ -224,6 +224,30 @@ def _tooling_facts_many(root: Path, rows: list[tuple[str, str, str, list[str]]])
     return facts
 
 
+LAUNCHERS = ("scripts/switch.sh", "scripts/launch.sh")
+
+
+def launcher_image_envs(root: Path) -> dict[str, set[str]]:
+    """launcher → the image env vars its export_variant_engine_pin() case arm accepts.
+    An engine whose image_env is missing from either makes every launch of its
+    slugs exit 2 with "unexpected engine pin export" (docs/ADDING_ENGINES.md)."""
+    out: dict[str, set[str]] = {}
+    for rel in LAUNCHERS:
+        try:
+            text = (root / rel).read_text(encoding="utf-8")
+        except OSError:
+            out[rel] = set()
+            continue
+        m = re.search(r"export_variant_engine_pin\(\)\s*\{(.*?)\n\}", text, re.S)
+        envs: set[str] = set()
+        for line in (m.group(1) if m else "").splitlines():
+            arm = re.match(r"\s*([A-Z0-9_|]+_IMAGE[A-Z0-9_|]*)\)", line)
+            if arm:
+                envs.update(arm.group(1).split("|"))
+        out[rel] = envs
+    return out
+
+
 # ── network: injectable so the tests never touch the network ────────────────
 
 def _hf_model_info(repo: str, revision: Optional[str]) -> tuple[Optional[int], Optional[dict]]:
