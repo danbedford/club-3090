@@ -23,7 +23,8 @@ scripts/lib/profiles-local/
 
 Editing them later: `catalog.sh update --slug S --set K=V` (a slug's entry),
 `catalog.sh update-weights --model M --variant V --set K=V` (a weights variant in
-models.d/ or extends.d/), `catalog.sh update-engine --id ID --add/--set …` (an engine)
+models.d/ or extends.d/), `catalog.sh update-engine --id ID --add/--set …` (an engine).
+`catalog.sh list` shows all of it, and what is broken, shadowed or unused.
 ```
 
 ## The easy way: c3 → ⑤ Promote

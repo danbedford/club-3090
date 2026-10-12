@@ -29,6 +29,7 @@
 #                         a weights variant in models.d/ or extends.d/ (files:, hf_repo, …)
 #   catalog.sh update-engine --id ID [--set K=V] [--add K=a,b] [--remove K=a,b]
 #                         a local engine: KV formats, families, lineage, image, …
+#   catalog.sh list [--json]   everything in the local layer, and what is broken or unused
 #   (`KEY=` with no value removes the key; every command writes only the local layer)
 #
 #   --root <dir>  operate on a throwaway tree instead of this checkout (tests).
@@ -45,7 +46,7 @@ ROOT="$PWD"
 die() { printf '[catalog] %s\n' "$*" >&2; exit 2; }
 
 usage() {
-  sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -65,6 +66,9 @@ if [[ "$SUB" == "update-weights" ]]; then
 fi
 if [[ "$SUB" == "update-engine" ]]; then
   exec python3 scripts/lib/profiles/catalog_update.py engine "$@"
+fi
+if [[ "$SUB" == "list" ]]; then
+  exec python3 scripts/lib/profiles/catalog_list.py "$@"
 fi
 
 COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" HFREPO="" ETYPE="" MINSM="" TO="" WVARIANT=""; declare -a SETS=()
@@ -704,5 +708,5 @@ PY
     ;;
 
   -h|--help) usage 0 ;;
-  *) die "unknown subcommand: $SUB (expected register | register-engine | unregister | unregister-engine | rename | update | update-weights | update-engine)" ;;
+  *) die "unknown subcommand: $SUB (expected register | register-engine | unregister | unregister-engine | rename | update | update-weights | update-engine | list)" ;;
 esac

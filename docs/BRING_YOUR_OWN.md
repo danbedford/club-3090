@@ -354,7 +354,18 @@ rather than named:
 ```bash
 bash scripts/switch.sh --local          # only the models YOU registered
 bash scripts/switch.sh --list --all     # everything; yours are tagged “· local”
+bash scripts/catalog.sh list            # the whole local layer, and what in it needs attention
 ```
+
+`catalog.sh list` covers more than slugs:
+- **Contents:** engines (and whether `register-engine` or `register` wrote them), models,
+  the variants attached to curated models, and slugs.
+- **Problems:**
+  - **broken:** a missing compose, engine, model or weights variant, or a file that doesn't parse;
+  - **shadowed:** a curated slug now has your slug's name;
+  - **unused:** an engine, model, attached variant or compose nothing uses.
+- It reads the files directly, so it still answers when the layer is broken. `--json`
+  prints the same as data.
 
 ```
   single   my-llamacpp/my-model    gguf/base.yml    (NA: 66K) · local
@@ -402,7 +413,16 @@ You can also edit an entry in place without re-registering:
 
 ```bash
 bash scripts/catalog.sh update --slug my-llamacpp/my-model --set workload=fast-chat --set max_ctx=32768
+bash scripts/catalog.sh update --slug my-llamacpp/my-model --set weights_variant=q8 --set "status_note=testing q8"
 ```
+
+- **Editable fields:** `workload`, `max_ctx`, `max_num_seqs`, `mem_util`,
+  `default_port`, `kv_format`, `tp`, `drafter`, `status`, `offload`, `spec_method`,
+  `kvcalc_key`, `weights_variant`, `chat_template` and `status_note`.
+- **Validated before writing:** the entry has to pass the same check the loader runs
+  (an invalid `status` is refused), and `weights_variant` has to be one of the model's
+  variants. If the catalog still fails to load afterwards, the file is put back.
+- `status_note=` clears the note.
 
 `origin` is not editable — it is stamped by the loader, and a local row able to call
 itself `core` would hide from the very listings meant to mark it. `model` is not
