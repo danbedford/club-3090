@@ -33,13 +33,10 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from scripts.lib.profiles import compat  # noqa: E402
 
-# Non-stock engines with no verifiable source commit yet. May only SHRINK: an
-# entry that gains a `source_ref` must be removed from here.
-NO_SOURCE_REF = {
-    # LMCache's own image; the v0.4.7-cu129 tag was re-pushed and the image
-    # carries no revision label, so no commit can be claimed.
-    "vllm-lmcache",
-}
+# Non-stock engines with no verifiable source commit yet, defined once in
+# catalog_rules.py. May only SHRINK: an entry that gains a `source_ref` must be
+# removed from there.
+from scripts.lib.profiles.catalog_rules import LINEAGE_NO_SOURCE_REF as NO_SOURCE_REF  # noqa: E402
 TYPE_FAMILY = {"vllm": "vllm", "sglang": "sglang", "exllamav3": "exllamav3",
                "llama.cpp": "llamacpp", "llama-cpp": "llamacpp", "llamacpp": "llamacpp"}
 

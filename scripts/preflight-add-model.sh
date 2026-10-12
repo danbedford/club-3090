@@ -109,6 +109,32 @@ echo ""
 
 run_gate "diagnose-profile ${SLUG}" bash "${ROOT_DIR}/scripts/diagnose-profile.sh" "${SLUG}"
 
+# Catalog rules (docs/ADDING_ENGINES.md, docs/ADDING_MODELS.md "Which case is
+# this?"): required for a curated slug, advisory for a local one, because the
+# local layer may run things the catalog would never ship. Findings print either
+# way; only a curated slug's required failures count against the preflight.
+RULES_ORIGIN="$(python3 - "${ROOT_DIR}" "${SLUG}" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1] + "/scripts/lib/profiles")
+from compose_registry import get_registry
+print((get_registry(sys.argv[1]).get(sys.argv[2]) or {}).get("origin") or "core")
+PY
+)"
+RULES_LOG="${TMP_DIR}/catalog_rules.log"
+if [[ "${RULES_ORIGIN}" == "local" ]]; then
+  echo "${C_HEAD}[preflight] catalog rules ${SLUG} (advisory: local slug)${C_RESET}"
+  python3 "${ROOT_DIR}/scripts/lib/profiles/catalog_rules.py" --slug "${SLUG}" >"${RULES_LOG}" 2>&1 || true
+  sed 's/^/    /' "${RULES_LOG}"
+  RESULTS+=("${C_DIM}·${C_RESET} catalog rules ${SLUG} ${C_DIM}(advisory for a local slug; required before export_pr.py)${C_RESET}")
+else
+  echo "${C_HEAD}[preflight] catalog rules ${SLUG}${C_RESET}"
+  python3 "${ROOT_DIR}/scripts/lib/profiles/catalog_rules.py" --slug "${SLUG}" --strict >"${RULES_LOG}" 2>&1
+  rules_rc=$?
+  sed 's/^/    /' "${RULES_LOG}"
+  record "catalog rules ${SLUG}" "${rules_rc}" "${RULES_LOG}"
+fi
+echo ""
+
 for gate in "${GATES[@]}"; do
   if [[ -f "${ROOT_DIR}/scripts/tests/${gate}.sh" ]]; then
     run_gate "${gate}" bash "${ROOT_DIR}/scripts/tests/${gate}.sh"

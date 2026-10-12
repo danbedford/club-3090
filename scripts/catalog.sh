@@ -508,8 +508,20 @@ if f.port and str(port) != str(f.port):
           f"{port} (LOCAL 202xx band). Your compose is unchanged.")
 PY
 
-    exec python3 scripts/lib/profiles/promote.py --spec-file "$SPEC" \
+    python3 scripts/lib/profiles/promote.py --spec-file "$SPEC" \
          --layer local ${RROOT:+--root "$RROOT"} ${DRY:+--dry-run} ${YES:+--yes}
+    rc=$?
+    # Would this pass the central registry? Advisory only: the local layer may run
+    # things the catalog would never ship. export_pr.py --check enforces the same
+    # rules before a PR (docs/ADDING_ENGINES.md, docs/ADDING_MODELS.md).
+    if [[ $rc -eq 0 && -z "$DRY" ]]; then
+      _slug="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["registry_entry"]["slug"])' "$SPEC" 2>/dev/null || true)"
+      if [[ -n "$_slug" ]]; then
+        echo "[catalog] registered. Would it pass the central registry? (advisory)"
+        python3 scripts/lib/profiles/catalog_rules.py --slug "$_slug" ${RROOT:+--root "$RROOT"} || true
+      fi
+    fi
+    exit "$rc"
     ;;
 
   -h|--help) usage 0 ;;

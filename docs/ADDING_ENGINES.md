@@ -264,6 +264,7 @@ The compose layout, header and registry contract are the same as in [ADDING_MODE
 | `test-engine-kind-resolver` | your engine resolves to a kind, and no private classifier crept in |
 | `test-engine-lineage` | every curated engine declares a valid lineage; non-stock engines name source and commit; every engine id resolves to a family |
 | `test-engine-port-set-drift` | every copy of the engine-port set agrees |
+| `scripts/lib/profiles/catalog_rules.py --slug <slug> --network` (or `--engine <id>`) | the part of this contract a machine can check: engine and container family, a discoverable port, the Status header, cache ownership, lineage, an anonymous image pull and the Hugging Face download. Advisory in `catalog.sh register`; required in `preflight-add-model.sh` for a curated slug and in `export_pr.py --check` (`test-catalog-rules`). A network rule that could not run counts as unchecked, never as a pass |
 | `test-profiles-compat` | the profile loads, cross-references resolve, and every slug fits a canonical scenario |
 | `test-engine-label-matches-compose` | the compose image default equals `install.spec` |
 | `test-launch-knobs` | catalogued knobs reach the container through both delivery channels |
@@ -287,7 +288,7 @@ The compose layout, header and registry contract are the same as in [ADDING_MODE
 
 1. ☐ Engine proposal issue answered; go-ahead from the maintainer
 2. ☐ Lineage class and fields; naming (id, filename, slug prefix, compose directory, container name, internal port)
-3. ☐ Image published by the engine's maintainer, digest-pinned, pullable without credentials; `install.spec` and `image_env`; allowlist arm in **both** launchers
+3. ☐ Image published by the engine's maintainer, digest-pinned, pullable without credentials (`catalog_rules.py --engine <id> --network`); `install.spec` and `image_env`; allowlist arm in **both** launchers
 4. ☐ `engines/<id>.yml`, plus hardware KV formats, kv-calc tables (vLLM-type) and the `test-profiles-compat` count
 5. ☐ The engine resolves in `engine-kind.sh` from its id, container name and image (`test-engine-lineage` checks the id); arms and resolver probes for a new family
 6. ☐ Discovery: standard internal port, or every mirrored port set updated
