@@ -45,8 +45,12 @@ EXIT_REFUSED = 3
 # and the speculative config live inside the image, not the compose. The
 # derivation says so rather than guessing (a wrong `offload` value has caused a
 # real misdiagnosis before), which leaves stating it as the user's job.
+# `kvcalc_key` names the kv-calc profile a vLLM-type slug projects VRAM with. A
+# registration can't know it (it is per quant), and export_pr.py refuses a vLLM
+# entry without one, so it has to be settable here.
 _EDITABLE = ("workload", "max_ctx", "max_num_seqs", "mem_util", "default_port",
-             "kv_format", "tp", "drafter", "status", "offload", "spec_method")
+             "kv_format", "tp", "drafter", "status", "offload", "spec_method",
+             "kvcalc_key")
 
 
 class Refusal(Exception):

@@ -10,7 +10,10 @@
 #   catalog.sh register   --compose <path> [--engine ID] [--model ID]
 #                         [--workload W] [--port N] [--weights PATH]
 #                         [--engine-type T] [--min-sm N] [--hf-repo ID]
-#                         [--dry-run] [-y]
+#                         [--weights-variant V] [--slug S] [--dry-run] [-y]
+#       --model naming a CURATED model attaches the slug to it (extends.d/<id>.yml)
+#       instead of creating a model: --weights-variant reuses one of its variants,
+#       or names a new one (which then needs --weights).
 #   catalog.sh register   --spec-file <path> [--dry-run] [-y]
 #   catalog.sh unregister --slug <engine>/<name> [--dry-run] [-y]
 #   catalog.sh rename     --slug <old> --to <new>  [--dry-run]
@@ -30,14 +33,14 @@ ROOT="$PWD"
 die() { printf '[catalog] %s\n' "$*" >&2; exit 2; }
 
 usage() {
-  sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
 [[ $# -gt 0 ]] || usage 2
 SUB="$1"; shift
 
-COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" HFREPO="" ETYPE="" MINSM="" TO=""; declare -a SETS=()
+COMPOSE="" SPEC_FILE="" ENGINE="" MODEL="" WORKLOAD="" PORT="" SLUG="" DRY="" YES="" RROOT="" WEIGHTS="" HFREPO="" ETYPE="" MINSM="" TO="" WVARIANT=""; declare -a SETS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --compose)   COMPOSE="${2:-}"; shift 2 ;;
@@ -47,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --workload)  WORKLOAD="${2:-}"; shift 2 ;;
     --port)      PORT="${2:-}"; shift 2 ;;
     --weights)   WEIGHTS="${2:-}"; shift 2 ;;
+    --weights-variant) WVARIANT="${2:-}"; shift 2 ;;
     --hf-repo)   HFREPO="${2:-}"; shift 2 ;;
     --engine-type) ETYPE="${2:-}"; shift 2 ;;
     --min-sm)    MINSM="${2:-}"; shift 2 ;;
@@ -133,15 +137,15 @@ PY_ENG
     # layer split or tensor parallelism in the catalog's sense, so a wrong value
     # nobody saw is worse than a prompt.
     python3 - "$COMPOSE" "$SPEC" "$ENGINE" "$MODEL" "$WORKLOAD" "$PORT" "$WEIGHTS" \
-             "${RROOT:-$ROOT}" "$ETYPE" "$MINSM" "$HFREPO" <<'PY' || exit $?
-import json, os, sys, zlib
+             "${RROOT:-$ROOT}" "$ETYPE" "$MINSM" "$HFREPO" "$WVARIANT" "$SLUG" <<'PY' || exit $?
+import json, os, re, sys, zlib
 from pathlib import Path
 
 sys.path.insert(0, ".")
 from scripts.lib.profiles.compose_facts import derive_compose_facts
 
 (src, out, engine_in, model_in, workload_in, port_in, weights_in, wroot,
- etype_in, minsm_in, hf_repo_in) = sys.argv[1:12]
+ etype_in, minsm_in, hf_repo_in, variant_in, slug_in) = sys.argv[1:14]
 text = Path(src).read_text(encoding="utf-8")
 f = derive_compose_facts(text, src)
 if not f.ok:
@@ -162,6 +166,22 @@ mid = model_in or f.served_name
 if not mid:
     print("[catalog] no model id: the compose has no --served-model-name/-a. "
           "Pass --model <id>.", file=sys.stderr)
+    raise SystemExit(2)
+
+# ATTACH. A model the catalog already ships gets another slug, not a second
+# model: the slug attaches through extends.d/<id>.yml (local_extensions.py),
+# which holds only the weights variants it adds. Only on an explicit --model: a
+# served name that merely equals a curated id stays a refusal that names the fix.
+_core_models = Path(wroot, "scripts/lib/profiles/models")
+attach = bool(model_in) and (_core_models / f"{model_in}.yml").is_file()
+if not model_in and (_core_models / f"{mid}.yml").is_file():
+    print(f"[catalog] the compose serves {mid!r}, which is a curated model. To add a "
+          f"slug of it, attach: --model {mid} --weights-variant <one of its variants, "
+          f"or a new name>.", file=sys.stderr)
+    raise SystemExit(2)
+if variant_in and not attach:
+    print("[catalog] --weights-variant applies when --model names a curated model.",
+          file=sys.stderr)
     raise SystemExit(2)
 
 max_ctx = int(f.max_ctx or 0) or 4096
@@ -280,7 +300,8 @@ _ARCH_REQUIRED = ("hidden_size", "num_hidden_layers", "num_attn_heads",
                   "num_kv_heads", "max_ctx_supported")
 if "max_ctx_supported" not in arch and max_ctx:
     arch["max_ctx_supported"] = max_ctx      # the compose proves at least this much
-need = [k for k in _ARCH_REQUIRED if arch.get(k) is None]
+# An attached slug writes no model profile: the curated one states the arch.
+need = [] if attach else [k for k in _ARCH_REQUIRED if arch.get(k) is None]
 if need:
     print(f"[catalog] the model profile needs arch dims a compose cannot state: "
           f"{', '.join(need)}.", file=sys.stderr)
@@ -300,9 +321,10 @@ if need:
 sys.path.insert(0, wroot)
 from scripts.lib.profiles.compat import load_profiles  # noqa: E402
 try:
-    known = set(load_profiles().engines)
+    _engines = load_profiles().engines
 except Exception:
-    known = set()
+    _engines = {}
+known = set(_engines)
 
 # ⚠️ TWO VOCABULARIES. compose_facts yields `llama-cpp` (hyphen); engine profiles
 # use `llama.cpp` (dot), and `type` has no enum validation — so passing the
@@ -355,7 +377,7 @@ _tp = int(f.tp or 1)
 _topo = "single" if _tp <= 1 else ("dual" if _tp == 2 else f"multi{_tp}")
 cpath = (f"scripts/lib/profiles-local/composes/{mid}/{engine}"
          f"/compose/{_topo}/{fmt}/base.yml")
-slug = f"{engine}/{mid}"
+slug = slug_in or f"{engine}/{mid}"
 
 
 # Weights FACTS, not placeholders. size_gb was hardcoded 1.0 and hf_repo "",
@@ -472,6 +494,83 @@ spec = {
         "max_ctx": max_ctx, "max_num_seqs": 1, "mem_util": 0.9,
         "compose_path": cpath, "default_port": port, "kvcalc_key": "SKIP"}},
 }
+
+# ── ATTACH: a slug of a curated model (extends.d/<id>.yml) ───────────────────
+variant, reuse, export_notes = "local", "", []
+if attach:
+    import yaml as _yaml
+    sys.path.insert(0, str(Path(wroot, "scripts/lib/profiles")))
+    import core_layout
+    from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY as _CORE_REG
+    _core = _yaml.safe_load((_core_models / f"{mid}.yml").read_text(encoding="utf-8")) or {}
+    _core_w = _core.get("weights") or {}
+    _ext_p = Path(wroot, "scripts/lib/profiles-local/extends.d", f"{mid}.yml")
+    _ext_w = {}
+    if _ext_p.is_file():
+        _ext_w = (_yaml.safe_load(_ext_p.read_text(encoding="utf-8")) or {}).get("weights") or {}
+    if not variant_in:
+        _local = f"; local ones: {', '.join(sorted(_ext_w))}" if _ext_w else ""
+        print(f"[catalog] attaching to the curated model {mid!r} needs --weights-variant: "
+              f"one of its variants to reuse its weights ({', '.join(sorted(_core_w)) or 'none'}"
+              f"{_local}), or a new name for weights of your own (with --weights).",
+              file=sys.stderr)
+        raise SystemExit(2)
+    if not re.match(r"^[a-z0-9][a-z0-9._-]*$", variant_in):
+        print(f"[catalog] --weights-variant {variant_in!r}: expected [a-z0-9][a-z0-9._-]*",
+              file=sys.stderr)
+        raise SystemExit(2)
+    variant = variant_in
+    _attach_w = {}
+    if variant in _core_w:
+        reuse = "curated, reused"
+    elif variant in _ext_w and not weights_in:
+        reuse = "local, reused"
+    else:
+        if not weights_in:
+            print(f"[catalog] {variant!r} is a new weights variant of {mid}: pass --weights "
+                  f"<dir or file> so the catalog knows where the weights are.", file=sys.stderr)
+            raise SystemExit(2)
+        reuse = "local, reused" if variant in _ext_w else "new"
+        _meta = {"path": _rel_path, "local_subdir": _rel_subdir, "size_gb": _size_gb,
+                 "format": fmt, "status": "incubating", "engine": engine, "kind": "main",
+                 "verify_glob": "*.gguf" if fmt == "gguf" else "*.safetensors"}
+        if _hf_repo:
+            _meta["hf_repo"] = _hf_repo
+        _attach_w = {variant: _meta}
+        if reuse == "new":
+            if not _hf_repo:
+                export_notes.append(f"weights.{variant} has no hf_repo: pass --hf-repo, or add "
+                                    f"it to extends.d/{mid}.yml")
+            export_notes.append(f"weights.{variant} has no files: list: add the globs "
+                                f"setup.sh should fetch to extends.d/{mid}.yml")
+    # Where core keeps this engine's composes, and the slug prefix it uses there
+    # (core_layout.py, shared with export_pr.py), so the slug exports as named.
+    _by_engine, _ = core_layout.engine_layout(_CORE_REG)
+    _pair, _pairs = core_layout.pick_pair(_by_engine, engine, f.engine or "")
+    if _pairs and _pair is None:
+        print(f"[catalog] core keeps {engine} composes in "
+              f"{', '.join(d + '/' for d, _ in _pairs)}, and this compose reads as "
+              f"{f.engine!r}, which picks none of them.", file=sys.stderr)
+        raise SystemExit(2)
+    _edir, _eprefix = _pair if _pair else (engine, engine)
+    slug = slug_in or f"{_eprefix}/{mid}-{_topo}-{variant}"
+    cpath = (f"scripts/lib/profiles-local/composes/{mid}/{_edir}"
+             f"/compose/{_topo}/{variant}/base.yml")
+    if Path(wroot, cpath).exists():
+        cpath = cpath[:-len("base.yml")] + f"{slug.split('/', 1)[-1]}.yml"
+    _tp_add = [_tp] if _tp not in (_core.get("valid_tp") or []) else []
+    _etype = (getattr(_engines.get(engine), "type", "") if engine in _engines
+              else (etype_in or _TYPE_BY_FACT.get(f.engine, "")))
+    if _etype == "vllm":
+        export_notes.append(f"vLLM-type entries need a kvcalc_key: catalog.sh update --slug "
+                            f"{slug} --set kvcalc_key={mid}:<profile>")
+    _kw = dict(spec["registry_entry"]["kwargs"], weights_variant=variant, compose_path=cpath)
+    spec = {
+        "model_id": mid,
+        "attach": {"weights": _attach_w, "valid_tp_add": _tp_add},
+        "compose": {"path": cpath, "content": text},
+        "registry_entry": {"slug": slug, "kwargs": _kw},
+    }
 # The engine profile rides in the SPEC and promote.py writes it with the other
 # local artifacts — AFTER its plan, its --dry-run exit and its confirm. It used to
 # be written HERE, before promote ran, so `register --dry-run` (and a declined
@@ -486,9 +585,9 @@ def mark(v, given):  # show the user which values THEY chose vs which we guessed
     return "given" if given else "derived"
 
 print("[catalog] resolved from the compose — check these before it writes:")
-for label, val, given in (
-    ("slug",      slug,              bool(engine_in and model_in)),
-    ("model",     mid,               bool(model_in)),
+_rows = [
+    ("slug",      slug,              bool(slug_in or (engine_in and model_in))),
+    ("model",     mid + (" (curated: the slug attaches to it)" if attach else ""), bool(model_in)),
     ("engine",    engine,            bool(engine_in)),
     ("workload",  workload,          bool(workload_in)),
     ("max_ctx",   max_ctx,           False),
@@ -505,12 +604,21 @@ for label, val, given in (
                                if f.cpu_offload_gb else "(none found)"), False),
     ("provider",  _hf_repo or "(none — pass --hf-repo)", bool(hf_repo_in)),
     ("size_gb",   _size_gb,          False),
-    ("family",    spec_family,       False),
-    ("vision",    bool(cfg_extra.get("vision_capable", False)), False),
-    ("arch",      f"hidden={arch['hidden_size']} layers={arch['num_hidden_layers']} "
-                  f"heads={arch['num_attn_heads']}/{arch['num_kv_heads']}", True),
-):
+]
+if attach:
+    _rows += [("variant", f"{variant} ({reuse})", True),
+              ("compose", cpath.split("/composes/", 1)[-1], False)]
+else:
+    _rows += [
+        ("family",    spec_family,       False),
+        ("vision",    bool(cfg_extra.get("vision_capable", False)), False),
+        ("arch",      f"hidden={arch['hidden_size']} layers={arch['num_hidden_layers']} "
+                      f"heads={arch['num_attn_heads']}/{arch['num_kv_heads']}", True),
+    ]
+for label, val, given in _rows:
     print(f"[catalog]   {label:10s} {str(val):46s} ({mark(val, given)})")
+for _n in export_notes:
+    print(f"[catalog]   before export_pr.py: {_n}")
 if f.port and str(port) != str(f.port):
     print(f"[catalog]   note: the compose serves on {f.port}; the catalog entry uses "
           f"{port} (LOCAL 202xx band). Your compose is unchanged.")

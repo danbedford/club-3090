@@ -24,6 +24,17 @@ The spec is the JSON dict the c3 scaffold computed (``compute_promote_scaffold``
       "setup": {...}                            # optional C1 `setup:` block
     }
 
+A slug ATTACHED to a curated model (catalog.sh register --model <curated id>)
+sends a different spec: the curated ``model_id``, no profile fields, and
+
+    {"attach": {"weights": {"<new variant>": {...}},   # only what it adds; may be {}
+                "valid_tp_add": [3]}}                    # optional
+
+It writes ``extends.d/<model_id>.yml`` (created, or merged with the variants already
+there) instead of a model profile, LOCAL layer only. The merged extension is
+validated before any write, since a broken one stops load_profiles() for every
+launcher; a failed post-write check puts every file back.
+
 TWO write targets (--layer, DEFAULT **local**):
 
 **local** (the community path — C4-rev).  Writes ONLY inside the gitignored
@@ -33,15 +44,15 @@ TWO write targets (--layer, DEFAULT **local**):
      ``scripts/lib/profiles-local/composes/``)
   3. a JSON MERGE into ``scripts/lib/profiles-local/registry.local.json``
      (plain-dict ``_entry`` kwargs — never a python-source edit).
-The slug MUST carry the ``local/`` namespace prefix and the entry is written
-with ``status="incubating"`` (hidden from ``switch.sh --list``, ``--force`` to
-launch — see compose_registry.STATUS_VALUES).
+The slug is ``<engine>/<name>``, like a curated one (the old ``local/`` prefix is
+refused, #1202), and the entry is written with ``status="incubating"`` (hidden from
+``switch.sh --list``, ``--force`` to launch — see compose_registry.STATUS_VALUES).
 
 **core** (maintainer-only).  Today's curated-catalog behavior:
   1. ``scripts/lib/profiles/models/<model_id>.yml``
   2. the compose file anywhere under ``models/``
-  3. an anchored ``"<slug>": _entry(...)`` insert into
-     ``scripts/lib/profiles/compose_registry.py``.
+  3. the entry merged into ``scripts/lib/profiles/registry.yaml`` (a canonical
+     rewrite of the data file; compose_registry.py is only its loader).
 Double-gated: requires ``--layer core`` AND ``C3_ALLOW_CORE_PROMOTE=1`` in the
 environment. Anything else refuses BEFORE writing — community users can never
 reach the core catalog through this tool.
@@ -83,6 +94,7 @@ _LOCAL_DIR_REL = "scripts/lib/profiles-local"
 _LOCAL_MODELS_REL = f"{_LOCAL_DIR_REL}/models.d"
 _LOCAL_COMPOSES_REL = f"{_LOCAL_DIR_REL}/composes"
 _LOCAL_REGISTRY_REL = f"{_LOCAL_DIR_REL}/registry.local.json"
+_LOCAL_EXTENDS_REL = f"{_LOCAL_DIR_REL}/extends.d"
 _LOCAL_SLUG_PREFIX = "local/"
 # Local entries ALWAYS land here (the enum's pre-experimental rung: hidden from
 # switch.sh --list, --force to launch). Not user-selectable — promote up the
@@ -304,6 +316,9 @@ def _post_write_checks(root: Path, spec: dict, profile_path: Path) -> None:
         if spec.get("_layer") == "core"
         else f"delete the written files ({_LOCAL_DIR_REL}/…)"
     )
+    no_rollback = "NO ROLLBACK — "
+    if spec.get("_attach") is not None:   # main() puts every file back
+        rollback_hint, no_rollback = "the files are put back", ""
 
     # 1) The mutated registry imports and carries the new slug (merged view —
     #    covers BOTH layers; the local JSON merge is visible via get_registry).
@@ -320,7 +335,7 @@ def _post_write_checks(root: Path, spec: dict, profile_path: Path) -> None:
         raise InternalError(
             "registry failed import-sanity after write:\n"
             + (chk.stderr.strip() or chk.stdout.strip())
-            + f"\n[promote] NO ROLLBACK — {rollback_hint}"
+            + f"\n[promote] {no_rollback}{rollback_hint}"
         )
 
     # 2) The written profile parses as YAML with the right id.
@@ -330,12 +345,21 @@ def _post_write_checks(root: Path, spec: dict, profile_path: Path) -> None:
         raise InternalError(f"PyYAML unavailable, cannot sanity-check the profile: {exc}")
     try:
         data = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
-        assert data.get("id") == mid, f"profile id {data.get('id')!r} != {mid!r}"
+        key = "extends" if spec.get("_attach") is not None else "id"
+        assert data.get(key) == mid, f"profile {key} {data.get(key)!r} != {mid!r}"
     except Exception as exc:
         raise InternalError(
             f"written profile failed sanity: {exc}\n"
-            f"[promote] NO ROLLBACK — delete {profile_path}"
+            f"[promote] {no_rollback}" + ("the files are put back" if not no_rollback else f"delete {profile_path}")
         )
+    # An attached slug: the whole profile set must still load. A broken extension
+    # stops load_profiles() for every launcher, curated slugs included.
+    if spec.get("_attach") is not None:
+        lp = _run(["python3", "-c", "from scripts.lib.profiles.compat import load_profiles; "
+                   "load_profiles()"], cwd=root)
+        if lp.returncode != 0:
+            raise InternalError("the profiles no longer load with the extension:\n"
+                                + (lp.stderr.strip() or lp.stdout.strip())[-800:])
 
     # 3) The shared emitter sees the new slug end-to-end.
     emit = _run(["bash", _EMIT_REL, "--json", str(root)], cwd=root)
@@ -343,7 +367,7 @@ def _post_write_checks(root: Path, spec: dict, profile_path: Path) -> None:
         raise InternalError(
             "registry-emit.sh --json failed after write:\n"
             + (emit.stderr.strip() or emit.stdout.strip())[-800:]
-            + f"\n[promote] NO ROLLBACK — {rollback_hint}"
+            + f"\n[promote] {no_rollback}{rollback_hint}"
         )
     try:
         payload = json.loads(emit.stdout)
@@ -352,7 +376,7 @@ def _post_write_checks(root: Path, spec: dict, profile_path: Path) -> None:
     except Exception as exc:
         raise InternalError(
             f"registry-emit re-check failed: {exc}\n"
-            f"[promote] NO ROLLBACK — {rollback_hint}"
+            f"[promote] {no_rollback}{rollback_hint}"
         )
 
 
@@ -375,6 +399,97 @@ def _check_common_shape(spec: Any) -> dict:
     if dwv not in weights:
         raise Refusal(f"spec.default_weight_variant {dwv!r} is not a weights key")
 
+    _check_entry_shape(spec, mid)
+    return spec
+
+
+def _refuse_if_path_escapes(rel: str, base_rel: str, what: str) -> None:
+    """Refuse a spec-supplied relative path that escapes (or sits outside) the
+    given layer directory — no traversal out of scripts/lib/profiles-local/."""
+    p = Path(rel)
+    if p.is_absolute() or ".." in p.parts:
+        raise Refusal(f"{what} must be a repo-relative path without '..': {rel!r}")
+    if not p.is_relative_to(Path(base_rel)):
+        raise Refusal(f"{what} must live under {base_rel}/ (got {rel!r})")
+
+
+def _validate_local_entry(spec: dict, root: Path) -> None:
+    """The checks every LOCAL registry entry gets, whether its model is new
+    (models.d) or curated (attached through extends.d). Raises Refusal."""
+    mid = spec["model_id"]
+    slug = spec["registry_entry"]["slug"]
+    kwargs = spec["registry_entry"]["kwargs"]
+    cpath = spec["compose"]["path"]
+    # ── Namespace + containment (C4-rev): local writes NEVER leave the layer.
+    # HARD-CUT (#1202 P3): local slugs are '<engine>/<name>', same as core.
+    if slug.startswith(_LOCAL_SLUG_PREFIX):
+        raise Refusal(
+            f"the {_LOCAL_SLUG_PREFIX!r} namespace was removed — local slugs "
+            f"now use '<engine>/<name>' (provenance is the 'origin' field). "
+            f"Use '<engine>/{slug[len(_LOCAL_SLUG_PREFIX):]}'."
+        )
+    if slug.count("/") != 1:
+        raise Refusal(f"local slug {slug!r} must be '<engine>/<name>'")
+    _refuse_if_path_escapes(cpath, _LOCAL_COMPOSES_REL, "spec.compose.path")
+    if kwargs.get("compose_path") != cpath:
+        raise Refusal(
+            f"registry kwargs.compose_path {kwargs.get('compose_path')!r} != "
+            f"compose.path {cpath!r}"
+        )
+    # Force the incubating rung — a local entry never ships functional.
+    kwargs["status"] = _LOCAL_FORCED_STATUS
+
+    compose_abs = root / cpath
+    if compose_abs.exists():
+        raise Refusal(f"compose path already exists: {compose_abs}")
+
+    # Collide against EVERYTHING (core + local) via the merged accessor.
+    registry = _import_compose_registry(root, merged=True)
+    if slug in registry:
+        raise Refusal(f"registry slug already exists: {slug}")
+    if slug in _load_local_raw(root):
+        raise Refusal(f"registry slug already exists in {_LOCAL_REGISTRY_REL}: {slug}")
+    _check_local_engine_profile(root, spec)
+
+    # Dry-wrap the kwargs EXACTLY like the loader will — a bad kwarg or a
+    # bad status must refuse BEFORE anything is written.
+    sys.path.insert(0, str(root))
+    try:
+        from scripts.lib.profiles.compose_registry import _entry  # noqa: E402
+
+        _entry(**kwargs)
+    except TypeError as exc:
+        raise Refusal(f"registry kwargs are not valid _entry kwargs: {exc}")
+    except ValueError as exc:
+        raise Refusal(f"registry kwargs rejected by _entry: {exc}")
+    # ── LOCAL: keep BYOM ports out of the curated band (#1142 follow-up) ──
+    # The curated catalog occupies 8010-8199. A local slug landing on one of
+    # those ports turns the repo's OWN test-compose-port-conflicts guard red
+    # on the user's checkout, and its remediation text invites reassigning
+    # "one side" — i.e. editing a curated entry they must never touch.
+    # Refuse the collision here and hand them the deterministic 202xx
+    # LOCAL-band port the c3 Promote scaffold already assigns, so the CLI and
+    # the cockpit agree on one convention.
+    want = kwargs.get("default_port")
+    if want is not None:
+        core_ports = {
+            e.get("default_port")
+            for e in _import_compose_registry(root, merged=False).values()
+        }
+        if want in core_ports:
+            suggested = 20200 + (zlib.crc32(mid.encode("utf-8")) % 100)
+            raise Refusal(
+                f"default_port {want} is already used by the curated catalog. "
+                f"LOCAL models live in the 202xx band so a `git pull` of new "
+                f"curated slugs can never collide with yours — use {suggested} "
+                f"(deterministic for model id {mid!r}; the same value c3's "
+                f"Promote scaffold assigns) and set the compose's "
+                f"${{PORT:-NNNN}} to match"
+            )
+
+
+def _check_entry_shape(spec: dict, mid: str) -> None:
+    """The compose + registry_entry part of a spec, shared by both spec shapes."""
     compose = spec.get("compose") or {}
     cpath = compose.get("path")
     ccontent = compose.get("content")
@@ -391,21 +506,114 @@ def _check_common_shape(spec: Any) -> dict:
         raise Refusal("spec.registry_entry.kwargs must be a dict incl. model + compose_path")
     if kwargs.get("model") != mid:
         raise Refusal(f"registry kwargs.model {kwargs.get('model')!r} != model_id {mid!r}")
+
+
+def _validate_attach(spec: Any, root: Path, layer: str) -> dict:
+    """A slug ATTACHED to a curated model (local_extensions.py): no models.d profile.
+    ``spec.attach`` = {"weights": {<new variant>: {...}}, "valid_tp_add": [...]}, both
+    optional. The merged ``extends.d/<id>.yml`` is validated here, before anything
+    is written, because a broken extension stops load_profiles() for every launcher,
+    curated slugs included."""
+    if layer != "local":
+        raise Refusal("attaching a slug to a curated model is LOCAL-layer only; in the "
+                      "curated catalog, add the slug and its weights to "
+                      "scripts/lib/profiles/models/<id>.yml in a PR")
+    mid = spec.get("model_id")
+    if not isinstance(mid, str) or not _MODEL_ID_RE.match(mid or ""):
+        raise Refusal(f"bad model_id {mid!r} — expected [a-z0-9][a-z0-9._-]*")
+    attach = spec.get("attach")
+    if not isinstance(attach, dict):
+        raise Refusal("spec.attach must be {weights: {...}, valid_tp_add: [...]}")
+    new_w = attach.get("weights") or {}
+    tp_add = attach.get("valid_tp_add") or []
+    if not isinstance(new_w, dict) or not all(isinstance(v, dict) for v in new_w.values()):
+        raise Refusal("spec.attach.weights must map variant -> mapping")
+    if not isinstance(tp_add, list) or not all(isinstance(x, int) and x > 0 for x in tp_add):
+        raise Refusal("spec.attach.valid_tp_add must be a list of positive integers")
+    _check_entry_shape(spec, mid)
+    spec["_layer"] = layer
+
+    core_path = root / _MODELS_DIR_REL / f"{mid}.yml"
+    if not core_path.is_file():
+        raise Refusal(f"{mid!r} is not a curated model ({_MODELS_DIR_REL}/{mid}.yml) — "
+                      "a model only your rig has gets its own profile instead")
+    try:
+        import yaml  # noqa: E402
+        core = yaml.safe_load(core_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        raise Refusal(f"cannot read {core_path}: {exc}")
+    core_w = core.get("weights") or {}
+    core_tp = [int(x) for x in (core.get("valid_tp") or [])]
+
+    ext_path = root / _LOCAL_EXTENDS_REL / f"{mid}.yml"
+    old_text = None
+    existing: dict = {}
+    if ext_path.exists():
+        try:
+            old_text = ext_path.read_text(encoding="utf-8")
+            existing = yaml.safe_load(old_text) or {}
+        except Exception as exc:
+            raise Refusal(f"{ext_path} is unreadable — fix or remove it first: {exc}")
+        if not isinstance(existing, dict):
+            raise Refusal(f"{ext_path}: expected a YAML mapping")
+    merged = {"schema_version": 1, "extends": mid, **existing}
+    merged_w = dict(merged.get("weights") or {})
+    added: list[str] = []
+    for name, meta in new_w.items():
+        if name in core_w:
+            raise Refusal(f"weights variant {name!r} is curated: reuse it as the slug's "
+                          "weights variant instead of adding it")
+        if name in merged_w:
+            if merged_w[name].get("path") != meta.get("path"):
+                raise Refusal(
+                    f"{_LOCAL_EXTENDS_REL}/{mid}.yml already has variant {name!r} at path "
+                    f"{merged_w[name].get('path')!r}; these weights are at "
+                    f"{meta.get('path')!r}. Pick another variant name.")
+            continue                       # the same weights: reuse the entry as it is
+        merged_w[name] = meta
+        added.append(name)
+    merged["weights"] = merged_w
+    have_tp = [int(x) for x in (merged.get("valid_tp_add") or [])]
+    added_tp = [t for t in tp_add if t not in core_tp and t not in have_tp]
+    if have_tp or added_tp:
+        merged["valid_tp_add"] = have_tp + added_tp
+
+    sys.path.insert(0, str(root))
+    try:
+        from scripts.lib.profiles import local_extensions as _ext  # noqa: E402
+        from scripts.lib.profiles.compat import WEIGHTS_VARIANT_KEYS  # noqa: E402
+        core_ids = {pth.stem for pth in (root / _MODELS_DIR_REL).glob("*.yml")}
+        _ext.validate(merged, ext_path, core_ids, core_w, WEIGHTS_VARIANT_KEYS)
+    except Refusal:
+        raise
+    except Exception as exc:
+        raise Refusal(f"the extension would not load: {exc}")
+    finally:
+        sys.path.pop(0)
+
+    kwargs = spec["registry_entry"]["kwargs"]
+    for name in [kwargs.get("weights_variant")] + list(kwargs.get("weights_companions") or []):
+        if name and name not in core_w and name not in merged_w:
+            raise Refusal(f"weights variant {name!r} is neither curated in {mid} nor in "
+                          f"spec.attach.weights")
+    tp = kwargs.get("tp")
+    if isinstance(tp, int) and tp not in core_tp and tp not in merged.get("valid_tp_add", []):
+        raise Refusal(f"tp {tp} is not in {mid}'s valid_tp {core_tp}: add it to "
+                      "spec.attach.valid_tp_add")
+
+    _validate_local_entry(spec, root)
+    spec["_attach"] = {
+        "path": ext_path, "data": merged, "old_text": old_text, "added": added,
+        "added_tp": added_tp,
+        "action": "write" if old_text is None else ("update" if added or added_tp else "keep"),
+    }
     return spec
-
-
-def _refuse_if_path_escapes(rel: str, base_rel: str, what: str) -> None:
-    """Refuse a spec-supplied relative path that escapes (or sits outside) the
-    given layer directory — no traversal out of scripts/lib/profiles-local/."""
-    p = Path(rel)
-    if p.is_absolute() or ".." in p.parts:
-        raise Refusal(f"{what} must be a repo-relative path without '..': {rel!r}")
-    if not p.is_relative_to(Path(base_rel)):
-        raise Refusal(f"{what} must live under {base_rel}/ (got {rel!r})")
 
 
 def validate_spec(spec: Any, root: Path, layer: str) -> dict:
     """Shape + collision validation. Raises Refusal (exit 3) — nothing written."""
+    if isinstance(spec, dict) and "attach" in spec:
+        return _validate_attach(spec, root, layer)
     spec = _check_common_shape(spec)
     spec["_layer"] = layer
     mid = spec["model_id"]
@@ -414,86 +622,21 @@ def validate_spec(spec: Any, root: Path, layer: str) -> dict:
     cpath = spec["compose"]["path"]
 
     if layer == "local":
-        # ── Namespace + containment (C4-rev): local writes NEVER leave the layer.
-        # HARD-CUT (#1202 P3): local slugs are '<engine>/<name>', same as core.
-        if slug.startswith(_LOCAL_SLUG_PREFIX):
-            raise Refusal(
-                f"the {_LOCAL_SLUG_PREFIX!r} namespace was removed — local slugs "
-                f"now use '<engine>/<name>' (provenance is the 'origin' field). "
-                f"Use '<engine>/{slug[len(_LOCAL_SLUG_PREFIX):]}'."
-            )
-        if slug.count("/") != 1:
-            raise Refusal(f"local slug {slug!r} must be '<engine>/<name>'")
-        _refuse_if_path_escapes(cpath, _LOCAL_COMPOSES_REL, "spec.compose.path")
-        if kwargs.get("compose_path") != cpath:
-            raise Refusal(
-                f"registry kwargs.compose_path {kwargs.get('compose_path')!r} != "
-                f"compose.path {cpath!r}"
-            )
-        # Force the incubating rung — a local entry never ships functional.
-        kwargs["status"] = _LOCAL_FORCED_STATUS
-
         profile_path = root / _LOCAL_MODELS_REL / f"{mid}.yml"
         if profile_path.exists():
             raise Refusal(f"local model profile already exists: {profile_path}")
-        compose_abs = root / cpath
-        if compose_abs.exists():
-            raise Refusal(f"compose path already exists: {compose_abs}")
-
-        # Collide against EVERYTHING (core + local) via the merged accessor…
-        registry = _import_compose_registry(root, merged=True)
-        if slug in registry:
-            raise Refusal(f"registry slug already exists: {slug}")
         # …and against core/local MODEL IDS (the loader refuses these loudly, so
         # refuse here where the message can name the exact fix).
         core_models = {e.get("model") for e in _import_compose_registry(root, merged=False).values()}
         if mid in core_models:
             raise Refusal(
-                f"model_id {mid!r} collides with a CORE model — pick another id"
+                f"model_id {mid!r} collides with a CORE model — pick another id, or "
+                f"attach a slug to it (catalog.sh register --model {mid} --weights-variant …)"
             )
         local_raw = _load_local_raw(root)
         if any(k.get("model") == mid for k in local_raw.values()):
             raise Refusal(f"local model id already exists in {_LOCAL_REGISTRY_REL}: {mid!r}")
-        if slug in local_raw:
-            raise Refusal(f"registry slug already exists in {_LOCAL_REGISTRY_REL}: {slug}")
-        _check_local_engine_profile(root, spec)
-
-        # Dry-wrap the kwargs EXACTLY like the loader will — a bad kwarg or a
-        # bad status must refuse BEFORE anything is written.
-        sys.path.insert(0, str(root))
-        try:
-            from scripts.lib.profiles.compose_registry import _entry  # noqa: E402
-
-            _entry(**kwargs)
-        except TypeError as exc:
-            raise Refusal(f"registry kwargs are not valid _entry kwargs: {exc}")
-        except ValueError as exc:
-            raise Refusal(f"registry kwargs rejected by _entry: {exc}")
-        # ── LOCAL: keep BYOM ports out of the curated band (#1142 follow-up) ──
-        # The curated catalog occupies 8010-8199. A local slug landing on one of
-        # those ports turns the repo's OWN test-compose-port-conflicts guard red
-        # on the user's checkout, and its remediation text invites reassigning
-        # "one side" — i.e. editing a curated entry they must never touch.
-        # Refuse the collision here and hand them the deterministic 202xx
-        # LOCAL-band port the c3 Promote scaffold already assigns, so the CLI and
-        # the cockpit agree on one convention.
-        want = kwargs.get("default_port")
-        if want is not None:
-            core_ports = {
-                e.get("default_port")
-                for e in _import_compose_registry(root, merged=False).values()
-            }
-            if want in core_ports:
-                suggested = 20200 + (zlib.crc32(mid.encode("utf-8")) % 100)
-                raise Refusal(
-                    f"default_port {want} is already used by the curated catalog. "
-                    f"LOCAL models live in the 202xx band so a `git pull` of new "
-                    f"curated slugs can never collide with yours — use {suggested} "
-                    f"(deterministic for model id {mid!r}; the same value c3's "
-                    f"Promote scaffold assigns) and set the compose's "
-                    f"${{PORT:-NNNN}} to match"
-                )
-
+        _validate_local_entry(spec, root)
         return spec
 
     # ── layer == "core": maintainer-gated curated-catalog write ──────────────
@@ -568,11 +711,41 @@ def plan_lines(root: Path, spec: dict) -> list[str]:
     slug = spec["registry_entry"]["slug"]
     if spec["_layer"] == "local":
         eng = []
+        att = spec.get("_attach")
         if spec.get("_engine_profile_path") is not None:
             rel = f"{_LOCAL_ENGINES_REL}/{spec['_engine_profile_path'].name}"
             eng = [f"  write {rel} (new local ENGINE profile)"
                    if spec.get("_engine_profile_action") == "write"
                    else f"  keep  {rel} (already exists — not overwritten)"]
+        if att is not None:
+            rel = f"{_LOCAL_EXTENDS_REL}/{mid}.yml"
+            what = []
+            if att["added"]:
+                what.append(f"variant(s) {', '.join(att['added'])}")
+            if att["added_tp"]:
+                what.append(f"valid_tp_add {att['added_tp']}")
+            ext_line = {
+                "write": f"  write {rel} (attaches local slugs to the curated model; "
+                         f"{', '.join(what) or 'no new variants'})",
+                "update": f"  update {rel}: add {', '.join(what)}"
+                          + (" (rewritten; comments in it are not kept)"
+                             if "#" in (att["old_text"] or "") else ""),
+                "keep": f"  keep  {rel} (already has what this slug needs)",
+            }[att["action"]]
+            variant = spec["registry_entry"]["kwargs"].get("weights_variant")
+            return [
+                f"plan (layer LOCAL — attach to the curated model {mid}, root {root}):",
+                *eng,
+                ext_line,
+                f"  write {spec['compose']['path']}",
+                f"  merge entry into {_LOCAL_REGISTRY_REL} (JSON — no source edit)",
+                f"  slug: {slug}  model: {mid} (curated)  variant: {variant}"
+                f"  status: {_LOCAL_FORCED_STATUS}",
+                "  then: load_profiles + get_registry() + registry-emit.sh --json re-checks;"
+                " a failure puts every file back",
+                f"  NO core file is touched. Undo later: catalog.sh unregister --slug {slug}"
+                f" (it keeps {rel})",
+            ]
         return [
             f"plan (layer LOCAL — gitignored {_LOCAL_DIR_REL}/, root {root}):",
             *eng,
@@ -595,6 +768,57 @@ def plan_lines(root: Path, spec: dict) -> list[str]:
     ]
 
 
+_EXT_HEADER = (
+    "# Attaches local slugs to the curated model {mid} (local_extensions.py).\n"
+    "# Additive only: new weights variants and valid_tp values, never an override.\n"
+    "# Written by catalog.sh register / promote.py; safe to edit by hand.\n"
+)
+
+
+def _write_extension(att: dict) -> None:
+    """extends.d/<id>.yml through a temp sibling + os.replace: other slugs may
+    already depend on this file, so a half-written one must never be seen."""
+    import yaml  # noqa: E402
+    path = att["path"]
+    text = _EXT_HEADER.format(mid=att["data"]["extends"]) + yaml.safe_dump(
+        att["data"], sort_keys=False, allow_unicode=True, default_flow_style=False)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+        _info(f"wrote {path}")
+    except OSError as exc:
+        raise InternalError(f"could not write {path}: {exc}")
+
+
+def _snapshot(paths: list[Path]) -> dict[Path, Optional[bytes]]:
+    return {pth: (pth.read_bytes() if pth.exists() else None) for pth in paths}
+
+
+def _restore(snap: dict[Path, Optional[bytes]], stop: Path) -> list[str]:
+    """Put every snapshotted file back as it was (absent → removed, along with the
+    directories the write created for it, up to ``stop``)."""
+    done = []
+    for pth, data in snap.items():
+        try:
+            if data is None:
+                if pth.exists():
+                    pth.unlink()
+                    done.append(f"removed {pth}")
+                parent = pth.parent
+                while parent != stop and stop in parent.parents and parent.is_dir() \
+                        and not any(parent.iterdir()):
+                    parent.rmdir()
+                    parent = parent.parent
+            else:
+                pth.write_bytes(data)
+                done.append(f"restored {pth}")
+        except OSError as exc:
+            done.append(f"could not restore {pth}: {exc}")
+    return done
+
+
 def _write_local(root: Path, spec: dict) -> tuple[Path, Path]:
     """The THREE local-layer artifacts. Returns (profile_path, compose_path)."""
     mid = spec["model_id"]
@@ -614,13 +838,19 @@ def _write_local(root: Path, spec: dict) -> tuple[Path, Path]:
         except OSError as exc:
             raise InternalError(f"could not write {ep_path}: {exc}")
 
-    # ── Write 1/3: the ModelProfile ─────────────────────────────────────────
-    try:
-        profile_path.parent.mkdir(parents=True, exist_ok=True)
-        profile_path.write_text(render_profile_yaml(spec), encoding="utf-8")
-        _info(f"wrote {profile_path}")
-    except OSError as exc:
-        raise InternalError(f"could not write {profile_path}: {exc}")
+    # ── Write 1/3: the ModelProfile, or for a curated model its extension ───
+    att = spec.get("_attach")
+    if att is not None:
+        profile_path = att["path"]
+        if att["action"] != "keep":
+            _write_extension(att)
+    else:
+        try:
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(render_profile_yaml(spec), encoding="utf-8")
+            _info(f"wrote {profile_path}")
+        except OSError as exc:
+            raise InternalError(f"could not write {profile_path}: {exc}")
 
     # ── Write 2/3: the compose ──────────────────────────────────────────────
     try:
@@ -786,13 +1016,31 @@ def main(argv: Optional[list[str]] = None) -> int:
         _info("dry-run — nothing written.")
         return 0
 
-    if spec["_layer"] == "local":
-        profile_path, _compose_abs = _write_local(root, spec)
-    else:
-        profile_path, _compose_abs = _write_core(root, spec)
+    # An attached slug shares extends.d/<id>.yml with every other slug on that
+    # model, so a failed write must not leave it changed: snapshot every target
+    # and put them all back if any post-write check fails.
+    snap = None
+    if spec.get("_attach") is not None:
+        targets = [spec["_attach"]["path"], root / spec["compose"]["path"],
+                   root / _LOCAL_REGISTRY_REL]
+        if spec.get("_engine_profile_action") == "write":
+            targets.append(spec["_engine_profile_path"])
+        snap = _snapshot(targets)
 
-    # ── Post-write sanity ───────────────────────────────────────────────────
-    _post_write_checks(root, spec, profile_path)
+    try:
+        if spec["_layer"] == "local":
+            profile_path, _compose_abs = _write_local(root, spec)
+        else:
+            profile_path, _compose_abs = _write_core(root, spec)
+
+        # ── Post-write sanity ───────────────────────────────────────────────
+        _post_write_checks(root, spec, profile_path)
+    except InternalError as exc:
+        if snap is None:
+            raise
+        undone = _restore(snap, root / _LOCAL_DIR_REL)
+        raise InternalError(f"{exc}\n[promote] ROLLED BACK — "
+                            + "; ".join(undone or ["nothing had been written"]))
     _info(f"import-sanity + registry-emit re-check passed for {slug}")
     # #1142 item 6: state the layer on every run — "PROMOTE_OK <slug>" alone left
     # the reader unable to tell whether their model went to their own checkout or

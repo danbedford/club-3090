@@ -89,7 +89,10 @@ is never removed by demote.
 
 To run a local slug of a model the curated catalog already has (another engine,
 another quant, a fine-tune), don't invent a new model id. Attach it to the curated
-model with `extends.d/<core-model-id>.yml`:
+model with `extends.d/<core-model-id>.yml`. `catalog.sh register --model <core id>
+--weights-variant <variant>` writes the file, the compose and the entry for you
+(docs/BRING_YOUR_OWN.md §5, "Attaching a slug to a model we ship"); by hand it looks
+like this:
 
 ```yaml
 schema_version: 1
